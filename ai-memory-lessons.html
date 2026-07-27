@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>What I Learned Building a Memory Layer for AI Coding Agents — Cecilia Lee</title>
+<meta name="description" content="Lessons from building an internal AI memory tool nobody asked for, that most of my team now uses daily.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600;6..72,400..1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf7f2;
+    --text:#1c1a17;
+    --muted:#75705f;
+    --accent:#b3541e;
+    --line:rgba(28,26,23,0.12);
+    --serif:'Newsreader', serif;
+    --mono:'JetBrains Mono', monospace;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--serif); font-size:17.5px; line-height:1.68;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:640px; margin:0 auto; padding:56px 24px 96px; }
+
+  a{ color:var(--text); text-decoration:underline; text-decoration-color:var(--accent); text-underline-offset:3px; }
+  a:hover{ color:var(--accent); }
+  a:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .back{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.04em;
+    text-decoration:none; color:var(--muted); display:inline-block; margin-bottom:40px;
+  }
+  .back:hover{ color:var(--accent); }
+
+  h1{
+    font-weight:600; font-size:1.85rem; line-height:1.2; margin:0 0 10px; letter-spacing:-0.01em;
+  }
+  .standfirst{
+    font-style:italic; color:var(--muted); margin:0 0 8px; font-size:1.02rem;
+  }
+  .meta{
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+    margin:0 0 40px; padding-bottom:20px; border-bottom:1px solid var(--line);
+  }
+
+  h2{
+    font-weight:600; font-size:1.25rem; margin:44px 0 10px; letter-spacing:-0.005em;
+  }
+  p{ margin:0 0 16px; }
+  strong{ font-weight:600; }
+  code{
+    font-family:var(--mono); font-size:0.83em; background:rgba(28,26,23,0.06);
+    padding:1px 5px; border-radius:3px;
+  }
+  ol, ul{ margin:0 0 16px; padding-left:24px; }
+  li{ margin-bottom:8px; }
+
+  .endnote{
+    margin-top:48px; padding-top:20px; border-top:1px solid var(--line);
+    font-size:0.9rem; color:var(--muted); font-style:italic;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back" href="index.html">← cecilia lee</a>
+
+  <h1>What I Learned Building a Memory Layer for AI Coding Agents</h1>
+  <p class="standfirst">Lessons from building an internal tool nobody asked for, that most of my team now uses daily.</p>
+  <p class="meta">july 2026</p>
+
+  <p>Last year I got tired of re-explaining my codebase to my AI coding assistant every morning.</p>
+
+  <p>If you use Claude Code, Cursor, or similar tools on a large codebase, you know the ritual: every new session starts cold. You paste in context, re-describe the service you're working on, remind it which conventions your team follows, and re-establish everything it knew perfectly well yesterday. On a small project this is a minor annoyance. Across a sprawling microservices architecture, it's a real tax — paid daily, by every engineer.</p>
+
+  <p>So I built a memory layer. Not because anyone asked me to — because I was annoyed. This post is about what I learned building it, presenting it to my team, and experimenting with AI-assisted engineering workflows more broadly.</p>
+
+  <h2>Start embarrassingly simple</h2>
+
+  <p>My first instinct was to reach for the fashionable architecture: vector database, embeddings, semantic search over everything. I'm glad I didn't start there.</p>
+
+  <p>The first version was just SQLite.</p>
+
+  <p>Sessions get indexed into a plain relational store. An LLM summarizes each session's context — what was worked on, what decisions were made, what the relevant files and tickets were. When you want that context back, you run a single command — <code>/recall {ticket or keyword}</code> — and the summarized context gets injected into your current session. A background watcher polls for new activity so the index stays current without anyone thinking about it.</p>
+
+  <p>That's it. No embeddings, no retrieval pipeline, no reranking. And for the dominant use case — <em>"give me back the context for the thing I was working on"</em> — keyword lookup over structured summaries turned out to be entirely sufficient, because engineers almost always recall work by ticket number or feature name, not by fuzzy semantic similarity.</p>
+
+  <p>I'm adding a vector store (ChromaDB) now — but for a genuinely different use case: ad-hoc questions where you don't know the keyword ("have we ever dealt with rate-limit issues on callbacks before?"). The lesson wasn't "vector databases are overrated." It was: <strong>match the retrieval mechanism to how people actually ask.</strong> Exact-recall questions deserve an index. Exploratory questions deserve embeddings. Starting with the simple one meant I shipped in days, not weeks, and learned from real usage before adding complexity.</p>
+
+  <h2>The pain point was sharper than I realised</h2>
+
+  <p>Tools in this space already existed — claude-mem, for instance, solves a similar problem for Claude Code. But our coding assistant is an internal tool, so nothing off the shelf could plug into it. If we wanted memory, someone had to build it. So I did, initially just for myself.</p>
+
+  <p>When I presented it to the team, it landed harder than I expected — and the reason taught me something about the problem I hadn't fully articulated. It wasn't just the morning cold-start ritual. It was <em>multi-ticket work</em>. Everyone juggles several tickets at once; a ticket gets blocked, you switch away, and a week later it unblocks — and you've forgotten what was built, what was decided, and why. The context isn't just expensive to re-establish, it's often <em>gone</em>. A memory layer doesn't just save typing; it makes blocked work resumable.</p>
+
+  <p>Today around 70% of the engineers on my team use it daily. The corollary I now believe strongly: <strong>internal tools are products, and your colleagues are unforgiving customers.</strong> They will not file feature requests; they will just quietly stop using it. The features that survived are the ones that removed friction (the background watcher exists because nobody — including me — remembered to manually index sessions). The features that died are the ones that asked users to change their habits.</p>
+
+  <h2>Summarise-and-recall is a token strategy, not just a convenience</h2>
+
+  <p>Something I only understood over time: the summarisation step isn't a compromise on the way to "real" memory — it's doing quiet, important work.</p>
+
+  <p>Injecting a compact summary instead of raw session history saves a lot of tokens, obviously. But the bigger effect is on output quality. Past a certain context size, more information stops helping and starts hurting: the model has too much to attend to, the relevant details get diluted by noise, and answers drift or fixate on the wrong things. Curated summaries keep the signal-to-noise ratio high. (To be precise, this is less about hallucination in the making-things-up sense and more about attention — the model misses or misweights what matters when it's buried. And summarisation is lossy, so you're trading fine-grained recall for precision. For resuming work on a ticket, that's the right trade.)</p>
+
+  <p><strong>Small context, deliberately chosen, beats big context passively accumulated.</strong> That principle now shapes everything I build in this space.</p>
+
+  <h2>There is no one true AI workflow</h2>
+
+  <p>Alongside the memory tool, I spent months experimenting with AI-assisted engineering workflows — skill-based agent instructions (in the style of the community "skills" repos), heavier agentic patterns, and various degrees of human-in-the-loop.</p>
+
+  <p>I went in with an ambitious target: <em>PRD to PR</em>. Hand the agent a product requirement, get back a reviewable pull request. It's the obvious dream, and plenty of demos make it look close. Working on a real, aged codebase, I ran into walls that demos don't show:</p>
+
+  <p><strong>The QA boundary.</strong> An agent needs a feedback loop to converge on working code — but letting it run and verify its own changes starts overstepping into QA's scope. Where the agent's self-verification ends and human QA begins turned out to be an organisational question as much as a technical one, and nobody has a clean answer yet.</p>
+
+  <p><strong>PRDs aren't specs.</strong> Real PRDs are written for humans who fill gaps with context. Handed to an agent, "unclear" becomes "unimplementable" — the requirements often can't be matched to the system as it technically exists.</p>
+
+  <p><strong>Tech debt is agent poison.</strong> Old APIs that still exist but shouldn't be used, multiple flows that do almost the same thing for historical reasons — things a tenured engineer navigates on instinct — reliably confused the agent into building on the wrong foundation.</p>
+
+  <p>So I came out convinced that hunting for <em>the</em> workflow is the wrong goal. What actually predicts whether an AI workflow helps comes down to three variables: <strong>the engineer's seniority</strong> (seniors catch agent mistakes in review, so the agent is leverage; juniors can end up shipping code they can't defend), <strong>familiarity with the codebase</strong> (in a codebase you know, AI speed is safe because you'll smell anything wrong; in one you don't, the same speed just gets you lost faster), and <strong>the type of ticket</strong> (a well-specified bug fix, a vague exploration, and a cross-service refactor are three different jobs; a workflow tuned for one is often counterproductive for another).</p>
+
+  <p>The cross-service case was painful enough that I built <a href="https://github.com/lsscecilia/skills-for-microservices">a set of open-source skills for working across microservices</a> — tracing an API call across service boundaries, generating per-service architecture specs agents can consume as context, and keeping a fleet of repos in sync. Notably, the <code>/ms-spec</code> skill exists precisely because of the tech-debt problem above: if the agent is going to be confused by legacy flows, the least you can do is document which flows are legacy.</p>
+
+  <p>If you're leading a team through AI adoption: <strong>stop looking for the workflow, and start matching workflows to the (engineer, codebase, task) triple.</strong></p>
+
+  <h2>What a losing prototype is actually for</h2>
+
+  <p>One more lesson, from a different project: I once took a one-line brief ("explore whether an AI chatbot could help with user onboarding") and had a working demo a week later. The demo worked. It also surfaced genuine security considerations, and the team decided not to proceed.</p>
+
+  <p>The fashionable take here is "fast prototyping is great, killed prototypes are wins." I'm honestly not sure I buy it as a general strategy — a week is cheap, but a culture of constantly prototyping things that get killed has real costs too. What I <em>did</em> take away is narrower and, I think, more defensible:</p>
+
+  <p>First, <strong>sometimes people need a concrete thing to reject.</strong> An abstract debate about whether to build a chatbot could have circled for a long time. A working demo with visible security implications ended the discussion in a week — the prototype's job wasn't to win, it was to make the decision cheap and grounded.</p>
+
+  <p>Second, <strong>the learning survives the project.</strong> Building it taught me how this class of chatbot actually works end to end, and how to create one from scratch — knowledge I've since repurposed for automated testing, which is arguably worth more than the original idea was. The prototype died; the capability didn't.</p>
+
+  <h2>What's next</h2>
+
+  <p>The project I'm most excited about now is a separate one, inspired by <a href="https://github.com/Graphify-Labs/graphify">Graphify</a> — the open-source tool that turns a codebase into a queryable knowledge graph, so agents traverse a compact graph instead of reading raw files into context. That's a token-efficiency win of the same species as summarise-and-recall, applied to the codebase itself. And it's the claude-mem situation all over again: Graphify ships as a skill for twenty-plus coding assistants, but ours is internal and isn't one of them — so I'm building something that plugs in. I'm starting to think this <em>is</em> the job, in this era: the open ecosystem moves fast, internal platforms can't consume it directly, and the valuable work is rebuilding the idea in a form that fits.</p>
+
+  <p>The plan goes further than a port, though. Context tooling like mine is fundamentally local today — every engineer keeps their own index, their own picture of the system. I want the graph to be <em>team-based</em>: exposed over <strong>MCP</strong>, so the whole team queries one continuously-updated graph instead of maintaining private copies — and so online agents can consume it as context too, not just humans at terminals. From there it naturally extends to a chat interface: when you're away from your laptop and need a fast answer about the system, you should be able to just ask.</p>
+
+  <p>Meanwhile the memory layer keeps evolving — semantic retrieval for exploratory queries is in progress, because at daily-driver usage levels, context efficiency stops being an optimization and starts being the feature.</p>
+
+  <p>If you're building similar internal AI tooling, I'd love to compare notes — I'm at <a href="https://github.com/lsscecilia">github.com/lsscecilia</a>.</p>
+
+  <p class="endnote">Views my own; all details described in general terms.</p>
+
+</div>
+</body>
+</html>
