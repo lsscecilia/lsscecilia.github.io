@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Designing an LLM Routing System — Cecilia Lee</title>
+<meta name="description" content="Design notes on LLM routing: who decides which model serves a request, where cost is actually computed, and why routing is per-conversation.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf7f2;
+    --text:#1c1a17;
+    --muted:#75705f;
+    --accent:#b3541e;
+    --line:rgba(28,26,23,0.12);
+    --box:rgba(28,26,23,0.04);
+    --serif:'Newsreader', serif;
+    --mono:'JetBrains Mono', monospace;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--serif); font-size:17.5px; line-height:1.68;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:680px; margin:0 auto; padding:56px 24px 96px; }
+
+  a{ color:var(--text); text-decoration:underline; text-decoration-color:var(--accent); text-underline-offset:3px; }
+  a:hover{ color:var(--accent); }
+  a:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .back{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.04em;
+    text-decoration:none; color:var(--muted); display:inline-block; margin-bottom:40px;
+  }
+  .back:hover{ color:var(--accent); }
+
+  h1{ font-weight:600; font-size:1.85rem; line-height:1.2; margin:0 0 10px; letter-spacing:-0.01em; }
+  .standfirst{ font-style:italic; color:var(--muted); margin:0 0 8px; font-size:1.02rem; }
+  .meta{
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+    margin:0 0 40px; padding-bottom:20px; border-bottom:1px solid var(--line);
+  }
+
+  h2{ font-weight:600; font-size:1.3rem; margin:48px 0 12px; letter-spacing:-0.005em; }
+  h3{ font-weight:600; font-size:1.05rem; margin:28px 0 8px; }
+  p{ margin:0 0 16px; }
+  strong{ font-weight:600; }
+  code{
+    font-family:var(--mono); font-size:0.82em; background:var(--box);
+    padding:1px 5px; border-radius:3px;
+  }
+  ol, ul{ margin:0 0 16px; padding-left:24px; }
+  li{ margin-bottom:8px; }
+
+  table{
+    width:100%; border-collapse:collapse; margin:20px 0 24px;
+    font-size:0.88rem;
+  }
+  th{
+    font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.08em;
+    color:var(--muted); text-align:left; font-weight:500;
+    padding:8px 10px; border-bottom:1.5px solid var(--text);
+  }
+  td{ padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td:first-child{ font-weight:600; white-space:nowrap; }
+
+  .diagram{
+    margin:24px 0 28px; padding:22px 18px; background:var(--box);
+    border:1px solid var(--line); border-radius:4px; overflow-x:auto;
+  }
+  .diagram svg{ display:block; margin:0 auto; max-width:100%; height:auto; }
+
+  .callout{
+    border-left:3px solid var(--accent); padding:2px 0 2px 18px; margin:22px 0;
+    font-style:italic; color:var(--text);
+  }
+
+  .soundbites{ margin:16px 0 24px; padding:0; list-style:none; }
+  .soundbites li{
+    font-style:italic; padding:10px 14px; margin-bottom:8px;
+    background:var(--box); border-radius:3px; font-size:0.95rem;
+  }
+
+  .endnote{
+    margin-top:48px; padding-top:20px; border-top:1px solid var(--line);
+    font-size:0.9rem; color:var(--muted); font-style:italic;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back" href="index.html">← cecilia lee</a>
+
+  <h1>Designing an LLM Routing System</h1>
+  <p class="standfirst">Who decides which model serves a request, where cost is actually computed, and why routing is per-conversation — design notes from studying the space.</p>
+  <p class="meta">july 2026 · systems design</p>
+
+  <p>Every serious LLM product eventually grows the same organ: a routing layer. You have multiple models — different providers, different sizes, different prices — and every request has to land on one of them, under constraints of cost, latency, quality, and who the customer is. These are my working notes on how I'd design that system, built up from studying how the large AI platforms do it and pressure-testing the design against the failure modes.</p>
+
+  <p>The one-sentence architecture: <strong>the edge resolves who you are (facts), the router decides which model (policy), the model gateway serves and meters, and the billing pipeline rates — with a versioned config store as the shared backbone.</strong> Everything below unpacks why the responsibilities split exactly there.</p>
+
+  <h2>The request path</h2>
+
+  <div class="diagram">
+  <svg viewBox="0 0 620 470" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace" role="img" aria-label="Architecture diagram: clients flow through API gateway, router service, model gateway, to model backends">
+    <defs>
+      <marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L6,3 L0,6 z" fill="#75705f"/>
+      </marker>
+    </defs>
+    <!-- clients -->
+    <rect x="30" y="20" width="160" height="40" rx="3" fill="none" stroke="#1c1a17" stroke-width="1.2"/>
+    <text x="110" y="44" text-anchor="middle" font-size="12" fill="#1c1a17">Retail client</text>
+    <rect x="430" y="20" width="160" height="40" rx="3" fill="none" stroke="#1c1a17" stroke-width="1.2"/>
+    <text x="510" y="44" text-anchor="middle" font-size="12" fill="#1c1a17">API client</text>
+
+    <!-- chat service -->
+    <rect x="30" y="90" width="160" height="40" rx="3" fill="none" stroke="#1c1a17" stroke-width="1.2"/>
+    <text x="110" y="109" text-anchor="middle" font-size="11.5" fill="#1c1a17">Chat service</text>
+    <text x="110" y="123" text-anchor="middle" font-size="9.5" fill="#75705f">+ conversation store</text>
+
+    <!-- gateway -->
+    <rect x="160" y="170" width="300" height="44" rx="3" fill="#faf7f2" stroke="#b3541e" stroke-width="1.5"/>
+    <text x="310" y="189" text-anchor="middle" font-size="12" fill="#1c1a17">API Gateway</text>
+    <text x="310" y="204" text-anchor="middle" font-size="9.5" fill="#75705f">auth · rate limits · spend caps · facts</text>
+
+    <!-- router -->
+    <rect x="160" y="250" width="300" height="44" rx="3" fill="#faf7f2" stroke="#b3541e" stroke-width="1.5"/>
+    <text x="310" y="269" text-anchor="middle" font-size="12" fill="#1c1a17">Router service</text>
+    <text x="310" y="284" text-anchor="middle" font-size="9.5" fill="#75705f">policy · experiments · scoring</text>
+
+    <!-- config store side box -->
+    <rect x="490" y="250" width="110" height="44" rx="3" fill="none" stroke="#75705f" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="545" y="269" text-anchor="middle" font-size="10.5" fill="#75705f">Config store</text>
+    <text x="545" y="283" text-anchor="middle" font-size="9" fill="#75705f">versioned</text>
+    <line x1="490" y1="272" x2="462" y2="272" stroke="#75705f" stroke-width="1" stroke-dasharray="4 3"/>
+
+    <!-- model gateway -->
+    <rect x="160" y="330" width="300" height="44" rx="3" fill="#faf7f2" stroke="#b3541e" stroke-width="1.5"/>
+    <text x="310" y="349" text-anchor="middle" font-size="12" fill="#1c1a17">Model Gateway</text>
+    <text x="310" y="364" text-anchor="middle" font-size="9.5" fill="#75705f">adapters · fallbacks · usage events</text>
+
+    <!-- billing side box -->
+    <rect x="490" y="330" width="110" height="44" rx="3" fill="none" stroke="#75705f" stroke-width="1" stroke-dasharray="4 3"/>
+    <text x="545" y="349" text-anchor="middle" font-size="10.5" fill="#75705f">Billing</text>
+    <text x="545" y="363" text-anchor="middle" font-size="9" fill="#75705f">rates async</text>
+    <line x1="490" y1="352" x2="462" y2="352" stroke="#75705f" stroke-width="1" stroke-dasharray="4 3"/>
+
+    <!-- backends -->
+    <rect x="60" y="415" width="130" height="38" rx="3" fill="none" stroke="#1c1a17" stroke-width="1.2"/>
+    <text x="125" y="438" text-anchor="middle" font-size="11" fill="#1c1a17">OpenAI</text>
+    <rect x="245" y="415" width="130" height="38" rx="3" fill="none" stroke="#1c1a17" stroke-width="1.2"/>
+    <text x="310" y="438" text-anchor="middle" font-size="11" fill="#1c1a17">Anthropic</text>
+    <rect x="430" y="415" width="130" height="38" rx="3" fill="none" stroke="#1c1a17" stroke-width="1.2"/>
+    <text x="495" y="431" text-anchor="middle" font-size="11" fill="#1c1a17">Self-hosted</text>
+    <text x="495" y="444" text-anchor="middle" font-size="9" fill="#75705f">vLLM</text>
+
+    <!-- arrows -->
+    <line x1="110" y1="60" x2="110" y2="86" stroke="#75705f" stroke-width="1.2" marker-end="url(#arr)"/>
+    <line x1="140" y1="130" x2="240" y2="166" stroke="#75705f" stroke-width="1.2" marker-end="url(#arr)"/>
+    <line x1="510" y1="60" x2="360" y2="166" stroke="#75705f" stroke-width="1.2" marker-end="url(#arr)"/>
+    <line x1="310" y1="214" x2="310" y2="246" stroke="#75705f" stroke-width="1.2" marker-end="url(#arr)"/>
+    <line x1="310" y1="294" x2="310" y2="326" stroke="#75705f" stroke-width="1.2" marker-end="url(#arr)"/>
+    <line x1="200" y1="374" x2="140" y2="411" stroke="#75705f" stroke-width="1.2" marker-end="url(#arr)"/>
+    <line x1="310" y1="374" x2="310" y2="411" stroke="#75705f" stroke-width="1.2" marker-end="url(#arr)"/>
+    <line x1="420" y1="374" x2="480" y2="411" stroke="#75705f" stroke-width="1.2" marker-end="url(#arr)"/>
+  </svg>
+  </div>
+
+  <p>Two client populations enter differently — retail through a chat service that owns conversation history, API customers straight into the gateway with their own history — but converge on the same spine. Scale assumption for everything below: roughly 10k RPS peak, streaming responses over SSE, with end-to-end latency dominated by the model itself, which is what buys the routing layer its 10–20ms decision budget.</p>
+
+  <h2>Facts vs. policy: the split that organizes everything</h2>
+
+  <p>The most important design line in the system is between the <strong>API gateway</strong> and the <strong>router</strong>, and it's the line between <em>facts</em> and <em>policy</em>.</p>
+
+  <p>The gateway is per-tenant and model-agnostic. It terminates retail JWTs and business API keys and normalizes both into a signed context: <code>{tenant_id, tenant_type, tier, region, experiments_eligible}</code>. It enforces dual rate limits — requests per minute <em>and</em> tokens per minute, because cost lives in tokens, not calls — plus spend caps fed back from billing, abuse pre-filtering, and the unglamorous work of holding 30-second SSE streams open and draining them gracefully on deploys. It can be built on off-the-shelf infrastructure (Envoy, Kong); the routing intelligence deliberately stays out of it.</p>
+
+  <p>The router is per-request and model-aware — and stateless. It reads the gateway's facts, looks up what they <em>mean</em> in the config store, and decides which model serves the request.</p>
+
+  <p class="callout">The test I use: does this change when a model launches? Then it's router config. Does it change when a user upgrades their plan? Then it's a gateway fact. The same human holding a retail subscription and an API key is two tenants, keyed by credential.</p>
+
+  <h2>The routing decision, in order</h2>
+
+  <p>Order matters here — each step constrains the next:</p>
+
+  <ol>
+    <li><strong>Resolve facts to policy.</strong> Tier and region map to a candidate model set, fallback rights, capacity pool, and cost ceiling.</li>
+    <li><strong>Explicit model?</strong> If the user named a model, validate and admit it — <em>never silently substitute</em>. A named model that's unavailable is an error or an opt-in fallback, not a quiet swap. Only <code>auto</code> continues to selection.</li>
+    <li><strong>Hard filters.</strong> Data residency, required capabilities (vision, tools, structured output), and — easy to forget — whether the conversation history actually fits the model's context window.</li>
+    <li><strong>Conversation stickiness.</strong> Bias strongly toward the incumbent model of the conversation. This is partly UX (mid-chat model switches are jarring), partly clean experiment metrics, and partly hard economics: prompt caching discounts ~90% of input tokens on a stable prefix, and that requires the same model, same provider, append-only prompt. Once caching enters the picture, <strong>routing is per-conversation, not per-message.</strong></li>
+    <li><strong>Experiment assignment.</strong> <code>hash(user_id + salt)</code> into buckets. Experiments can override defaults; they can never override hard filters.</li>
+    <li><strong>Scoring.</strong> Start with rules; graduate to a small difficulty classifier (~5ms, RouteLLM-style); eventually a contextual bandit trained on logged outcomes. Retail traffic optimizes for cost; business traffic optimizes for quality and SLA.</li>
+    <li><strong>Load-aware admission.</strong> Circuit breaker state, queue depth, and rate-limit headroom can demote a degraded candidate at the last moment.</li>
+    <li><strong>Emit and log</strong> <code>{decision, reason, config_version, bucket}</code> — the decision must be deterministic given (user, request, config version), or you can't debug it and can't trust your experiment data.</li>
+  </ol>
+
+  <p>The router is also a brand-new single point of failure that didn't exist before you added it. It runs as stateless replicas, and the gateway holds a static default route so that total router failure degrades to "everyone gets the safe default model" rather than an outage.</p>
+
+  <h2>The config store is a control plane, not a settings file</h2>
+
+  <p>Everything slow-changing that expresses <em>intent</em> lives in one versioned store: the model registry (endpoints, context limits, capabilities, lifecycle state), the pricing catalog (versioned and effective-dated), tier-to-policy mappings, routing thresholds, fallback chains, breaker parameters, experiment definitions, and capacity topology. Writes are validated and dry-run; pushes propagate by watch/subscribe; every consumer caches last-known-good; rollback is one click to a previous version. Model launches, price changes, and routing changes all happen without a deploy.</p>
+
+  <p>Just as important is what's deliberately <em>not</em> in it: billing state, conversation history, live health signals, and secrets — each of which has a rightful owner elsewhere.</p>
+
+  <h2>The model gateway measures; it never prices</h2>
+
+  <p>Below the router sits an adapter layer that speaks each provider's API (or adopts the OpenAI-compatible format as a lingua franca) behind one unified schema. It handles streaming passthrough with one iron rule — <strong>retry only before the first token, never mid-stream</strong> — plus fallback chains, per-provider circuit breakers, and token-bucket budgets per provider key.</p>
+
+  <p>Its most important output is the <strong>usage event</strong>: <code>{request_id, requested_model, served_model, input/output/cached tokens, pricing_version}</code>. This is the source of truth for what happened — facts only, no pricing math. Which leads to the part of the design I find most underrated.</p>
+
+  <h2>Cost is computed in four places — only one is real</h2>
+
+  <table>
+    <tr><th>Stage</th><th>Where</th><th>Purpose</th><th>Authoritative?</th></tr>
+    <tr><td>Estimate</td><td>Router / gateway, pre-request</td><td>Admission control, cost-aware selection</td><td>Never billed</td></tr>
+    <tr><td>Measurement</td><td>Model gateway, post-response</td><td>The usage event — token facts</td><td>Facts, not cost</td></tr>
+    <tr><td>Rating</td><td>Billing aggregator, async</td><td>Dedupe by request_id, join versioned price catalog, produce invoices/credits</td><td><strong>Yes — the only one</strong></td></tr>
+    <tr><td>Spend counter</td><td>Real-time (Redis-style)</td><td>Fast approximate cap enforcement at the gateway</td><td>Reconciled in batch</td></tr>
+  </table>
+
+  <p>Keeping these four honest about their roles prevents an entire family of bugs where two components disagree about what something cost. Rating is replayable — at-least-once event delivery plus idempotent dedupe gives effectively-once billing, and a price-catalog correction can re-rate history.</p>
+
+  <p>Edge cases worth having answers for: a stream disconnect bills the tokens actually generated (flush the usage event on abnormal exit); a fallback charges the <em>lower</em> of requested vs. served model; <code>auto</code> mode bills a blended flat rate, so routing savings become margin; and joining provider-side costs per tenant yields gross margin per customer — which feeds back into routing policy.</p>
+
+  <h2>Chat history is a routing input, not a storage detail</h2>
+
+  <p>Models are stateless, so history is resent every turn. Retail gets a chat service and conversation store (append-only <code>messages(conversation_id, seq, role, content, tokens, model_id)</code>, partition-keyed, partial responses persisted on disconnect, token counts stored at write time); API customers own their own history.</p>
+
+  <p>Context assembly is a budgeting problem: budget = context limit − system prompt − reserved output, filled by a sliding window, then rolling summarization (a cheap model compressing old turns), then retrieval. Two couplings back to routing matter: context length is a hard filter (long conversations exclude small models), and prompt caching makes stickiness an economic requirement, not a preference. And since cost grows roughly quadratically with turns, summarization is a cost lever — not just a trick for fitting the window.</p>
+
+  <h2>Experimentation without fooling yourself</h2>
+
+  <p>Randomize on <code>user_id</code>, not per-request — consistent UX and clean statistics, at the price of slower ramps; chat products take that trade. Overlapping experiment layers allow concurrent tests without interference. Assignments stay sticky within a conversation. Measure latency, cost per request, error rate, thumbs ratio, regeneration rate, and retention, backed by offline LLM-judge evals; wrap it in guardrail metrics with auto-shutoff, and roll out as shadow traffic → 1% canary → ramp. Shadow traffic in particular is how a new model gets evaluated on real requests with zero user exposure.</p>
+
+  <h2>Trade-offs I'd state out loud</h2>
+
+  <ul class="soundbites">
+    <li>"The router is a new SPOF — stateless replicas, plus a static default route in the gateway as the backstop."</li>
+    <li>"Start rule-based; earn the learned router's complexity. 20–40% cost savings has to pay for added latency and opacity."</li>
+    <li>"Measure at the model gateway, rate in billing, estimate at the edge — never let anyone but the rating engine claim to know real cost."</li>
+    <li>"Routing decisions are per-conversation, not per-message, once caching enters the picture."</li>
+    <li>"If the user named a model, never silently substitute."</li>
+    <li>"At small scale this separation is ceremony — I'd collapse the gateway and router into one service and split them when scale demands it."</li>
+  </ul>
+
+  <p class="endnote">These are personal design notes from studying how LLM routing systems are built — assembled from public architectures, papers (RouteLLM and friends), and working through the failure modes. Not a description of any system I operate. If you spot something wrong, I'd genuinely like to hear it — <a href="mailto:lsscecilia8888@gmail.com">email me</a>.</p>
+
+</div>
+</body>
+</html>
