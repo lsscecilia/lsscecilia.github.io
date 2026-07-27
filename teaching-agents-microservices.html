@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Teaching AI Agents to Work Across Microservices — Cecilia Lee</title>
+<meta name="description" content="Why cross-service work is where coding agents struggle most, and the three open-source skills I built to help.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf7f2;
+    --text:#1c1a17;
+    --muted:#75705f;
+    --accent:#b3541e;
+    --line:rgba(28,26,23,0.12);
+    --box:rgba(28,26,23,0.04);
+    --serif:'Newsreader', serif;
+    --mono:'JetBrains Mono', monospace;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--serif); font-size:17.5px; line-height:1.68;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:680px; margin:0 auto; padding:56px 24px 96px; }
+
+  a{ color:var(--text); text-decoration:underline; text-decoration-color:var(--accent); text-underline-offset:3px; }
+  a:hover{ color:var(--accent); }
+  a:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .back{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.04em;
+    text-decoration:none; color:var(--muted); display:inline-block; margin-bottom:40px;
+  }
+  .back:hover{ color:var(--accent); }
+
+  h1{ font-weight:600; font-size:1.85rem; line-height:1.2; margin:0 0 10px; letter-spacing:-0.01em; }
+  .standfirst{ font-style:italic; color:var(--muted); margin:0 0 8px; font-size:1.02rem; }
+  .meta{
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+    margin:0 0 40px; padding-bottom:20px; border-bottom:1px solid var(--line);
+  }
+
+  h2{ font-weight:600; font-size:1.3rem; margin:48px 0 12px; letter-spacing:-0.005em; }
+  h3{ font-weight:600; font-size:1.02rem; margin:26px 0 6px; }
+  h3 code{ font-size:0.85em; }
+  p{ margin:0 0 16px; }
+  strong{ font-weight:600; }
+  code{
+    font-family:var(--mono); font-size:0.82em; background:var(--box);
+    padding:1px 5px; border-radius:3px;
+  }
+  ol, ul{ margin:0 0 16px; padding-left:24px; }
+  li{ margin-bottom:8px; }
+
+  .callout{
+    border-left:3px solid var(--accent); padding:2px 0 2px 18px; margin:22px 0;
+    font-style:italic;
+  }
+
+  .endnote{
+    margin-top:48px; padding-top:20px; border-top:1px solid var(--line);
+    font-size:0.9rem; color:var(--muted); font-style:italic;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back" href="index.html">← cecilia lee</a>
+
+  <h1>Teaching AI Agents to Work Across Microservices</h1>
+  <p class="standfirst">Coding agents are good inside one repo. The moment a task crosses a service boundary, they get lost — here's why, and the three skills I open-sourced to help.</p>
+  <p class="meta">march 2026 · <a href="https://github.com/lsscecilia/skills-for-microservices">github.com/lsscecilia/skills-for-microservices</a></p>
+
+  <p>If you've used an AI coding agent on a single, tidy repository, you've probably had a good time. If you've pointed one at a real microservices architecture — dozens of repos, services calling services, events flying around, ten years of accumulated decisions — you've probably watched it flail. Not because the model is bad at code, but because <strong>the information it needs doesn't live in any file it can read.</strong></p>
+
+  <p>In my <a href="how-coding-agents-work.html">earlier notes on how agents work</a>, I ended on the idea that an agent is only as good as what you feed it. Cross-service work is where that bites hardest. This post is about the specific ways it bites, and the three Claude Code skills I ended up building and <a href="https://github.com/lsscecilia/skills-for-microservices">open-sourcing</a> to deal with it.</p>
+
+  <h2>Why service boundaries break agents</h2>
+
+  <p>Working on my team's microservices, I kept hitting the same three walls:</p>
+
+  <p><strong>The answer is in another repo.</strong> A frontend engineer sends you a network call and asks for a backend change. The route handler might be in this service — or behind the gateway in a different one, calling a third for the actual data. A human with tenure just <em>knows</em> where things live. An agent scoped to one repo doesn't, and can't grep its way to code it can't see.</p>
+
+  <p><strong>The map exists only in people's heads.</strong> Who calls whom, which service owns which data, what events flow where — in most teams this architecture knowledge is tribal. There's no file to put in the agent's context, because nobody ever wrote it down. So the agent reconstructs its own guess from whatever it happens to read, and the guess is confidently wrong.</p>
+
+  <p><strong>Legacy code looks exactly like real code.</strong> This one hurt the most. Old endpoints that still exist but shouldn't be used, two flows that do almost the same thing for historical reasons, feature flags nobody remembers, columns nobody dares drop. A tenured engineer navigates this on instinct. To an agent, deprecated code is indistinguishable from load-bearing code — it's all just text — so it happily builds new features on foundations the team abandoned years ago.</p>
+
+  <p class="callout">The common thread: agents don't fail on microservices because the code is hard. They fail because the <em>context</em> — the system map, the ownership, the "don't touch that" folklore — was never written down in a form anything could read.</p>
+
+  <h2>Three skills, one idea: write the folklore down</h2>
+
+  <p>A <em>skill</em>, in the Claude Code sense, is a file of instructions the agent reads when a matching task appears — a runbook written for a model instead of a human. Each of the three in the repo attacks one of the walls above.</p>
+
+  <h3><code>/be-api-trace</code> — from a network call to a backend change plan</h3>
+
+  <p>You paste a browser DevTools network call — method, URL, request, response. The skill parses the API contract out of it, searches the current repo for the route handler (and tells you if it lives in a <em>different</em> service), maps what the frontend renders from the response, traces response fields back to database tables, and produces a scoped change plan: the migration, the service changes, a before/after contract diff. It even drafts the one-liner to send back to the frontend engineer.</p>
+
+  <p>The point isn't automation for its own sake — it's that "FE asks for a BE change" is a task whose first hour is usually pure archaeology, and the archaeology is mechanical enough to hand off.</p>
+
+  <h3><code>/ms-spec</code> — make the tribal map explicit</h3>
+
+  <p>This is the one closest to my heart. It discovers services from the repo, docker-compose, or gateway config; builds the system map — who calls whom, what events flow where, who owns what data; and then does the two things I most wished existed: it scans for <strong>domain pollution</strong> (business logic sitting in a service it doesn't belong to) and <strong>legacy code</strong> (deprecated endpoints, dual implementations, orphaned flags and columns).</p>
+
+  <p>Then — and this part matters — it <em>interrogates you</em>. It asks targeted questions, one category at a time, until every gap is either filled or explicitly marked <code>[UNKNOWN]</code>. The output is an architecture doc plus one spec file per service, each ending in a "Context for AI Agents" section. Drop the relevant file into a session and the agent starts with the map instead of a guess — including which flows are legacy, which is the fix for the wall that hurt the most.</p>
+
+  <p>Honest admission: the docs are useful to <em>humans</em> too. Half the value of writing context for agents is discovering your team never wrote it for people either.</p>
+
+  <h3><code>/update-all</code> — the boring one</h3>
+
+  <p>Discovers every git repo under a parent folder, figures out whether each uses <code>master</code> or <code>main</code>, checks out the default branch, pulls, and reports anything that needs attention. Utterly unglamorous. But cross-service work starts with "make sure all thirty repos are current," and a stale repo quietly poisons everything an agent concludes downstream. Boring tools that remove a whole class of confusion are worth their weight.</p>
+
+  <h2>What I'd tell someone starting this</h2>
+
+  <p><strong>Write for the reader you actually have.</strong> An agent reading a spec doesn't need elegant prose; it needs unambiguous ownership statements, explicit "this is deprecated" markers, and honest <code>[UNKNOWN]</code>s rather than confident blanks. Oddly, writing for that reader made me a clearer writer for humans too.</p>
+
+  <p><strong>Marking what's legacy beats describing what's current.</strong> Agents can read current code themselves. What they cannot infer is which parts of it the team has walked away from. If you document only one thing, document that.</p>
+
+  <p><strong>Keep the context scoped.</strong> One spec file per service, loaded per task — not one giant architecture dump in every session. The same principle as everywhere else in this space: <a href="ai-memory-lessons.html">small context, deliberately chosen, beats big context passively accumulated</a>.</p>
+
+  <p>The repo is public at <a href="https://github.com/lsscecilia/skills-for-microservices">github.com/lsscecilia/skills-for-microservices</a> — if you try the skills on your own architecture, I'd genuinely love to hear what breaks.</p>
+
+  <p class="endnote">All examples described in general terms. The skills are generic and open source — they contain nothing from any particular system.</p>
+
+</div>
+</body>
+</html>
