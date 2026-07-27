@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How AI Coding Agents Actually Work — Cecilia Lee</title>
+<meta name="description" content="A plain-language walkthrough of the ReAct loop — thought, action, observation — and how agents figure out which tool to use.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf7f2;
+    --text:#1c1a17;
+    --muted:#75705f;
+    --accent:#b3541e;
+    --green:#4f7a5e;
+    --line:rgba(28,26,23,0.12);
+    --box:rgba(28,26,23,0.04);
+    --serif:'Newsreader', serif;
+    --mono:'JetBrains Mono', monospace;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--serif); font-size:17.5px; line-height:1.68;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:680px; margin:0 auto; padding:56px 24px 96px; }
+
+  a{ color:var(--text); text-decoration:underline; text-decoration-color:var(--accent); text-underline-offset:3px; }
+  a:hover{ color:var(--accent); }
+  a:focus-visible, button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+
+  .back{
+    font-family:var(--mono); font-size:12px; letter-spacing:0.04em;
+    text-decoration:none; color:var(--muted); display:inline-block; margin-bottom:40px;
+  }
+  .back:hover{ color:var(--accent); }
+
+  h1{ font-weight:600; font-size:1.85rem; line-height:1.2; margin:0 0 10px; letter-spacing:-0.01em; }
+  .standfirst{ font-style:italic; color:var(--muted); margin:0 0 8px; font-size:1.02rem; }
+  .meta{
+    font-family:var(--mono); font-size:11.5px; color:var(--muted);
+    margin:0 0 40px; padding-bottom:20px; border-bottom:1px solid var(--line);
+  }
+
+  h2{ font-weight:600; font-size:1.3rem; margin:48px 0 12px; letter-spacing:-0.005em; }
+  p{ margin:0 0 16px; }
+  strong{ font-weight:600; }
+  code{
+    font-family:var(--mono); font-size:0.82em; background:var(--box);
+    padding:1px 5px; border-radius:3px;
+  }
+  pre{
+    font-family:var(--mono); font-size:12px; line-height:1.6;
+    background:var(--box); border:1px solid var(--line); border-radius:4px;
+    padding:16px 18px; overflow-x:auto; margin:20px 0 24px;
+  }
+  pre code{ background:none; padding:0; font-size:inherit; }
+  ol, ul{ margin:0 0 16px; padding-left:24px; }
+  li{ margin-bottom:8px; }
+
+  .callout{
+    border-left:3px solid var(--accent); padding:2px 0 2px 18px; margin:22px 0;
+    font-style:italic;
+  }
+
+  /* ---- Loop diagram (animated) ---- */
+  .loop-fig{
+    margin:26px 0; padding:26px 16px; background:var(--box);
+    border:1px solid var(--line); border-radius:4px; text-align:center;
+  }
+  .loop-nodes{ display:flex; justify-content:center; align-items:center; gap:10px; flex-wrap:wrap; }
+  .loop-node{
+    font-family:var(--mono); font-size:12.5px; padding:10px 16px;
+    border:1.5px solid var(--muted); border-radius:3px; color:var(--muted);
+    transition:all .4s ease; background:var(--bg);
+  }
+  .loop-node.active{
+    border-color:var(--accent); color:var(--accent); font-weight:500;
+    transform:scale(1.06);
+  }
+  .loop-arrow{ font-family:var(--mono); color:var(--muted); font-size:14px; }
+  .loop-caption{
+    font-family:var(--mono); font-size:11px; color:var(--muted); margin-top:14px; min-height:16px;
+  }
+
+  /* ---- Step-through demo ---- */
+  .demo{
+    margin:26px 0 30px; border:1px solid var(--line); border-radius:4px; overflow:hidden;
+  }
+  .demo-head{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:10px 14px; background:var(--box); border-bottom:1px solid var(--line);
+  }
+  .demo-title{ font-family:var(--mono); font-size:11px; letter-spacing:0.08em; text-transform:uppercase; color:var(--muted); }
+  .demo-controls button{
+    font-family:var(--mono); font-size:11.5px; padding:5px 12px; margin-left:8px;
+    background:var(--bg); border:1px solid var(--muted); border-radius:3px; color:var(--text);
+    cursor:pointer;
+  }
+  .demo-controls button:hover{ border-color:var(--accent); color:var(--accent); }
+  .demo-body{ padding:16px 14px 8px; min-height:230px; }
+
+  .msg{
+    font-family:var(--mono); font-size:12px; line-height:1.55;
+    padding:9px 12px; border-radius:3px; margin-bottom:9px;
+    opacity:0; transform:translateY(6px);
+    transition:opacity .45s ease, transform .45s ease;
+  }
+  .msg.shown{ opacity:1; transform:translateY(0); }
+  .msg .tag{
+    display:inline-block; font-size:9.5px; letter-spacing:0.08em; text-transform:uppercase;
+    margin-right:8px; padding:1px 6px; border-radius:2px; vertical-align:1px;
+  }
+  .msg.model{ background:rgba(179,84,30,0.07); }
+  .msg.model .tag{ background:var(--accent); color:var(--bg); }
+  .msg.tool{ background:rgba(79,122,94,0.10); }
+  .msg.tool .tag{ background:var(--green); color:var(--bg); }
+  .msg.user{ background:var(--box); }
+  .msg.user .tag{ background:var(--muted); color:var(--bg); }
+  .msg.final{ background:rgba(79,122,94,0.16); font-weight:500; }
+  .msg.final .tag{ background:var(--green); color:var(--bg); }
+
+  .demo-note{
+    font-family:var(--mono); font-size:10.5px; color:var(--muted);
+    padding:8px 14px 12px; border-top:1px dashed var(--line); min-height:18px;
+  }
+
+  @media (prefers-reduced-motion: reduce){
+    .msg{ transition:none; }
+    .loop-node{ transition:none; }
+  }
+
+  .endnote{
+    margin-top:48px; padding-top:20px; border-top:1px solid var(--line);
+    font-size:0.9rem; color:var(--muted); font-style:italic;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back" href="index.html">← cecilia lee</a>
+
+  <h1>How AI Coding Agents Actually Work</h1>
+  <p class="standfirst">The ReAct loop in plain language — thought, action, observation — and how an agent figures out which tool to reach for.</p>
+  <p class="meta">february 2026 · notes</p>
+
+  <p>When I first started using AI coding agents, they felt a bit like magic: you type "fix the failing test," and the thing goes off, reads files, runs commands, and comes back with an answer. Under the hood, though, the core mechanism is surprisingly simple — simple enough to fit in one page. These are my notes on how it works, written the way I wish someone had explained it to me.</p>
+
+  <h2>An agent is a model in a loop</h2>
+
+  <p>A language model, by itself, can only do one thing: read text in, write text out. It can't run a command, open a file, or search the web. What turns a model into an <em>agent</em> is a thin program wrapped around it that does three things, over and over:</p>
+
+  <ol>
+    <li>Send the model the task <em>plus everything that has happened so far</em></li>
+    <li>Read the model's reply — if it asks to use a tool, actually run that tool</li>
+    <li>Append the tool's result to the history, and go around again</li>
+  </ol>
+
+  <p>The most common shape of this loop is called <strong>ReAct</strong> — short for <em>Reason + Act</em>. Each turn, the model produces a <strong>Thought</strong> (its reasoning about what to do next), an <strong>Action</strong> (which tool to call, with what input), and then the loop feeds back an <strong>Observation</strong> (what the tool returned). Thought, action, observation. Repeat until the model decides it has enough to answer.</p>
+
+  <div class="loop-fig" aria-hidden="true">
+    <div class="loop-nodes">
+      <span class="loop-node" id="ln-thought">Thought</span>
+      <span class="loop-arrow">→</span>
+      <span class="loop-node" id="ln-action">Action</span>
+      <span class="loop-arrow">→</span>
+      <span class="loop-node" id="ln-obs">Observation</span>
+      <span class="loop-arrow">↻</span>
+    </div>
+    <div class="loop-caption" id="loop-caption">the loop runs until the model produces a final answer</div>
+  </div>
+
+  <h2>Watch one task run</h2>
+
+  <p>Here's a tiny example — an agent asked to gather two facts. Step through it and watch what the loop actually does. The key thing to watch: <strong>the conversation history grows every turn</strong>, and each new model call sees all of it.</p>
+
+  <div class="demo">
+    <div class="demo-head">
+      <span class="demo-title">react agent · step-through</span>
+      <span class="demo-controls">
+        <button id="btn-step">Step ›</button>
+        <button id="btn-play">Play ▸</button>
+        <button id="btn-reset">Reset</button>
+      </span>
+    </div>
+    <div class="demo-body" id="demo-body">
+      <div class="msg user" data-step="1"><span class="tag">task</span>Get the weather and population of NYC</div>
+      <div class="msg model" data-step="2"><span class="tag">model</span>Thought: I need the weather first.<br>Action: Search — "weather in NYC"</div>
+      <div class="msg tool" data-step="3"><span class="tag">tool</span>Observation: Sunny, 25°C</div>
+      <div class="msg model" data-step="4"><span class="tag">model</span>Thought: Got the weather. Now the population.<br>Action: Search — "population of NYC"</div>
+      <div class="msg tool" data-step="5"><span class="tag">tool</span>Observation: 8 million</div>
+      <div class="msg model final" data-step="6"><span class="tag">final</span>Final Answer: It's sunny and 25°C in NYC, population about 8 million.</div>
+    </div>
+    <div class="demo-note" id="demo-note">press Step to begin</div>
+  </div>
+
+  <p>Three things this little run demonstrates, which generalize to every real agent:</p>
+
+  <p><strong>1. Memory is just the transcript.</strong> The model has no memory between calls — none. On every iteration it re-reads the entire history from scratch. If the loop ever forgets to append an observation, the model genuinely doesn't know that step happened, so it will reason its way to doing it again. Most "my agent is stuck in a loop" bugs are exactly this: the model isn't confused, it's <em>uninformed</em> — the loop dropped part of the record.</p>
+
+  <p><strong>2. The loop has to know when to stop.</strong> The model signals it's done by emitting a final answer instead of another action. The wrapper must detect that and exit — and also enforce a maximum number of iterations as a safety net, because a model that never converges would otherwise burn tokens forever. Every real agent framework has both: a termination signal and an iteration cap.</p>
+
+  <p><strong>3. Everything the model "does" is text.</strong> The action is just a formatted string the wrapper parses. This is why agents can fail in mundane ways — a slightly malformed action line and the parser misses it. Modern APIs solve this with structured tool-calling, where the model outputs the tool name and arguments as typed JSON rather than free text. Same loop; sturdier plumbing.</p>
+
+  <h2>The whole thing in ~30 lines</h2>
+
+  <p>Here's a minimal, honest version of the loop — stripped of error handling, but structurally the same thing every agent framework is doing underneath:</p>
+
+<pre><code>import re
+
+class ReActAgent:
+    def __init__(self, llm, tools):
+        self.llm = llm
+        self.tools = {t.name: t for t in tools}
+
+    def run(self, task, max_iterations=5):
+        history = ""
+        for _ in range(max_iterations):          # safety net: never loop forever
+            prompt = f"Task: {task}\nHistory: {history}\nNext Step:"
+            response = self.llm.generate(prompt)
+
+            if "Final Answer:" in response:      # termination signal → exit
+                return response
+
+            action, action_input = self.parse_action(response)
+            if action in self.tools:
+                observation = self.tools[action].execute(action_input)
+                # append — never overwrite. The transcript IS the memory.
+                history += f"\n{response}\nObservation: {observation}"
+            else:
+                history += f"\n{response}\nObservation: unknown tool"
+
+        return "Stopped: hit iteration limit."
+
+    def parse_action(self, text):
+        action = re.search(r"Action:\s*(\w+)", text)
+        arg    = re.search(r"Action Input:\s*(.*)", text)
+        return (action.group(1), arg.group(1).strip()) if action and arg else (None, None)
+</code></pre>
+
+  <p>Every line maps to something from the previous section. The <code>history +=</code> is point one — append-only, because the model re-reads it all each call and anything dropped never happened. The <code>Final Answer</code> check and <code>max_iterations</code> are point two — the termination signal and the safety cap. And <code>parse_action</code> pulling structure out of free text with a regex is point three — the fragile part that structured tool-calling replaces in production systems.</p>
+
+  <h2>How does the agent pick the right tool?</h2>
+
+  <p>This is the part that felt most mysterious to me at first. Nobody writes <code>if "weather" in task: use_search()</code>. So how does the model know?</p>
+
+  <p>The unglamorous answer: <strong>the tools are described to it in the prompt, and it reads the descriptions.</strong> Every tool the agent has comes with a name, a natural-language description ("Search the web for current information"), and a schema of its parameters. All of that goes into the context before your task does. Choosing a tool is then just next-word prediction doing what it does — the model has seen millions of examples of matching a need to a described capability, and it picks the tool whose description fits the situation. Which means:</p>
+
+  <p class="callout">Tool selection quality is mostly a documentation problem. A tool with a vague description gets misused or ignored; a tool with a precise description of what it does and <em>when to use it</em> gets picked correctly. You improve an agent's tool choice the same way you'd improve a new teammate's — by writing better docs.</p>
+
+  <p>At small scale, that's the whole story. At larger scale, two problems appear, and the solutions to both are worth knowing:</p>
+
+  <p><strong>Too many tools to fit in context.</strong> An agent with hundreds of available tools can't carry every description on every call — that's tokens spent on 195 tools it won't use. The fix is <em>tool retrieval</em>: keep full definitions out of context, give the agent a search-over-tools capability, and load a tool's definition only when a task looks like it needs it. The same "small context, deliberately chosen" principle that applies to conversation history applies to tool inventories.</p>
+
+  <p><strong>Tools need instructions, not just schemas.</strong> Knowing a tool's parameters isn't the same as knowing how to use it well — the workflows, the gotchas, the order of operations. That's where <em>skills</em> come in: files of instructions the agent reads when a matching task appears, essentially runbooks written for a model instead of a human. (This is the pattern behind my own <a href="https://github.com/lsscecilia/skills-for-microservices">skills-for-microservices</a> — the hard part of working across microservices isn't calling tools, it's knowing which service owns what, and a skill can carry that knowledge in.) And for connecting agents to external systems in a standard way, <strong>MCP</strong> (Model Context Protocol) has become the common plug: a server describes its tools once, and any MCP-speaking agent can discover and call them.</p>
+
+  <h2>Why this matters even if you never build an agent</h2>
+
+  <p>Once you see the loop, a lot of everyday agent behavior stops being mysterious:</p>
+
+  <ul>
+    <li>Long sessions degrade because the transcript grows every turn — the model isn't getting "tired," its context is filling with noise. (This is what pushed me to build a <a href="ai-memory-lessons.html">memory layer with summarise-and-recall</a>.)</li>
+    <li>Agents repeat work when part of the record is missing from context — not confused, uninformed.</li>
+    <li>An agent is only as good as its tool descriptions — which is why writing them is real engineering work, not an afterthought.</li>
+  </ul>
+
+  <p>The loop is simple. Everything hard about agents lives in what you feed it.</p>
+
+  <p class="endnote">Personal notes from learning how this works — simplified on purpose. If I've gotten something wrong, <a href="mailto:lsscecilia8888@gmail.com">tell me</a>.</p>
+
+</div>
+
+<script>
+  (function(){
+    var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    /* --- loop diagram cycle --- */
+    var nodes = [
+      { el: document.getElementById('ln-thought'), cap: 'the model reasons about what to do next' },
+      { el: document.getElementById('ln-action'),  cap: 'it names a tool and an input — as text' },
+      { el: document.getElementById('ln-obs'),     cap: 'the wrapper runs the tool, appends the result' }
+    ];
+    var cap = document.getElementById('loop-caption');
+    var li = 0;
+    function cycle(){
+      nodes.forEach(function(n){ n.el.classList.remove('active'); });
+      nodes[li].el.classList.add('active');
+      cap.textContent = nodes[li].cap;
+      li = (li + 1) % nodes.length;
+    }
+    if(!reduced){ cycle(); setInterval(cycle, 1800); }
+    else { nodes[0].el.classList.add('active'); }
+
+    /* --- step-through demo --- */
+    var msgs = Array.prototype.slice.call(document.querySelectorAll('#demo-body .msg'));
+    var note = document.getElementById('demo-note');
+    var stepNotes = {
+      1: 'the task enters the context',
+      2: 'call 1 — the model sees the task, reasons, and names a tool',
+      3: 'the wrapper actually runs Search and appends the result to history',
+      4: 'call 2 — the model re-reads EVERYTHING, sees the weather is done, moves on',
+      5: 'second observation appended — the transcript is the memory',
+      6: 'call 3 — the model has both facts, so it answers instead of acting. Loop exits.'
+    };
+    var current = 0;
+    var timer = null;
+
+    function show(n){
+      msgs.forEach(function(m){
+        m.classList.toggle('shown', parseInt(m.dataset.step,10) <= n);
+      });
+      note.textContent = n === 0 ? 'press Step to begin' : (stepNotes[n] || '');
+    }
+    function step(){
+      if(current < msgs.length){ current++; show(current); }
+      if(current >= msgs.length && timer){ clearInterval(timer); timer = null; playBtn.textContent = 'Play ▸'; }
+    }
+    function reset(){
+      if(timer){ clearInterval(timer); timer = null; }
+      playBtn.textContent = 'Play ▸';
+      current = 0; show(0);
+    }
+    var playBtn = document.getElementById('btn-play');
+    document.getElementById('btn-step').addEventListener('click', function(){
+      if(timer){ clearInterval(timer); timer = null; playBtn.textContent = 'Play ▸'; }
+      step();
+    });
+    playBtn.addEventListener('click', function(){
+      if(timer){ clearInterval(timer); timer = null; playBtn.textContent = 'Play ▸'; return; }
+      if(current >= msgs.length){ reset(); }
+      playBtn.textContent = 'Pause ⏸';
+      step();
+      timer = setInterval(step, reduced ? 2600 : 1700);
+    });
+    document.getElementById('btn-reset').addEventListener('click', reset);
+    show(0);
+  })();
+</script>
+
+</body>
+</html>
