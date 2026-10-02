@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tools, MCP, and What Makes a Coding Agent Different — Cecilia Lee</title>
+<meta name="description" content="How agents actually call tools, why MCP exists instead of everyone just using APIs, and what really separates a coding agent from a general-purpose agent.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf7f2; --text:#1c1a17; --muted:#75705f; --accent:#b3541e; --green:#4f7a5e;
+    --line:rgba(28,26,23,0.12); --box:rgba(28,26,23,0.04);
+    --serif:'Newsreader', serif; --mono:'JetBrains Mono', monospace;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--serif); font-size:17.5px; line-height:1.68;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:680px; margin:0 auto; padding:56px 24px 96px; }
+  a{ color:var(--text); text-decoration:underline; text-decoration-color:var(--accent); text-underline-offset:3px; }
+  a:hover{ color:var(--accent); }
+  a:focus-visible, button:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .back{ font-family:var(--mono); font-size:12px; letter-spacing:0.04em; text-decoration:none; color:var(--muted); display:inline-block; margin-bottom:40px; }
+  .back:hover{ color:var(--accent); }
+  h1{ font-weight:600; font-size:1.85rem; line-height:1.2; margin:0 0 10px; letter-spacing:-0.01em; }
+  .standfirst{ font-style:italic; color:var(--muted); margin:0 0 8px; font-size:1.02rem; }
+  .meta{ font-family:var(--mono); font-size:11.5px; color:var(--muted); margin:0 0 40px; padding-bottom:20px; border-bottom:1px solid var(--line); }
+  h2{ font-weight:600; font-size:1.3rem; margin:48px 0 12px; letter-spacing:-0.005em; }
+  h3{ font-weight:600; font-size:1.02rem; margin:26px 0 6px; }
+  p{ margin:0 0 16px; }
+  strong{ font-weight:600; }
+  code{ font-family:var(--mono); font-size:0.82em; background:var(--box); padding:1px 5px; border-radius:3px; }
+  pre{ font-family:var(--mono); font-size:12px; line-height:1.6; background:var(--box); border:1px solid var(--line); border-radius:4px; padding:14px 16px; overflow-x:auto; margin:16px 0 22px; }
+  pre code{ background:none; padding:0; }
+  ol, ul{ margin:0 0 16px; padding-left:24px; }
+  li{ margin-bottom:8px; }
+  .callout{ border-left:3px solid var(--accent); padding:2px 0 2px 18px; margin:22px 0; font-style:italic; }
+  table{ width:100%; border-collapse:collapse; margin:18px 0 24px; font-size:0.88rem; }
+  th{ font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); text-align:left; font-weight:500; padding:8px 10px; border-bottom:1.5px solid var(--text); }
+  td{ padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td:first-child{ font-weight:600; white-space:nowrap; }
+
+  .diagram{ margin:24px 0 28px; padding:20px 14px; background:var(--box); border:1px solid var(--line); border-radius:4px; overflow-x:auto; }
+  .diagram svg{ display:block; margin:0 auto; max-width:100%; height:auto; }
+
+  /* toggle demo for MxN vs M+N */
+  .toggle-fig{ margin:24px 0 10px; padding:20px 16px; background:var(--box); border:1px solid var(--line); border-radius:4px; }
+  .toggle-head{ display:flex; justify-content:center; gap:8px; margin-bottom:16px; }
+  .toggle-head button{
+    font-family:var(--mono); font-size:11.5px; padding:6px 14px; border-radius:3px;
+    border:1px solid var(--muted); background:var(--bg); color:var(--text); cursor:pointer;
+  }
+  .toggle-head button.active{ border-color:var(--accent); color:var(--accent); font-weight:500; }
+  .toggle-count{ text-align:center; font-family:var(--mono); font-size:12.5px; color:var(--muted); margin-top:10px; }
+  .toggle-count strong{ color:var(--accent); }
+
+  .endnote{ margin-top:48px; padding-top:20px; border-top:1px solid var(--line); font-size:0.9rem; color:var(--muted); font-style:italic; }
+
+  @media (prefers-reduced-motion: reduce){ * { transition:none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back" href="index.html">← cecilia lee</a>
+
+  <h1>Tools, MCP, and What Makes a Coding Agent Different</h1>
+  <p class="standfirst">How an agent actually calls a tool, why MCP exists when APIs already do, and what really separates a coding agent from a general-purpose one.</p>
+  <p class="meta">march 2026 · notes</p>
+
+  <p>I covered the <a href="how-coding-agents-work.html">basic ReAct loop</a> — thought, action, observation — in an earlier note. This one goes one level deeper into two things people tend to gloss over: what "calling a tool" actually means mechanically, and why an entire protocol (MCP) exists for something APIs already seemed to do. Then I'll get to the question I get asked most: what actually makes a <em>coding</em> agent different from, say, a customer-support agent or a research agent.</p>
+
+  <h2>The model never calls anything</h2>
+
+  <p>This is the single most useful mental model I have for this whole space: <strong>the model doesn't execute tools. It writes text that describes an intent, and something else executes it.</strong></p>
+
+  <p>Concretely, when a model "uses a tool," it's producing structured output — typically JSON — naming a tool and its arguments:</p>
+
+<pre><code>{
+  "tool": "run_tests",
+  "arguments": { "path": "src/payments/" }
+}</code></pre>
+
+  <p>That's it. That's the entire contribution of the model to "using a tool." A wrapper program — usually called the <strong>agent harness</strong> or <strong>host</strong> — reads that JSON, actually runs the test suite, captures stdout/stderr and the exit code, and stuffs the result back into the conversation as the next message. The model then reads that result like any other text and decides what to do next.</p>
+
+  <p>This is worth sitting with because it reframes almost every "the AI did X" claim you'll encounter: the model proposed X, and some separate, ordinary piece of software actually did X. All the real-world capability — filesystem access, network calls, shell execution — lives in the harness, not the model. This is also exactly why agent security is a harness problem: the model can ask for anything; what it's actually allowed to do is a permissions question for the code around it, same as any other program with user-supplied input.</p>
+
+  <h2>Why isn't "just call the API" enough?</h2>
+
+  <p>Here's the question that confused me longest: every tool an agent uses — GitHub, Slack, a database, a search engine — already has an API. Why do we need a whole separate protocol (MCP — Model Context Protocol) instead of just... calling those APIs?</p>
+
+  <p>The honest answer is that nothing stops you from just calling APIs directly, and plenty of simple agents do exactly that. MCP exists to solve a problem that only shows up once you have <em>many</em> agents wanting to use <em>many</em> tools: without a shared standard, every agent application has to write bespoke integration code for every tool it wants — and that code has to describe the tool to the model, handle auth, parse the response, and get updated whenever the API changes. Do that for <em>N</em> different agent apps against <em>M</em> different tools, and you've written roughly <em>N × M</em> bespoke integrations.</p>
+
+  <div class="toggle-fig">
+    <div class="toggle-head">
+      <button id="btn-without" class="active">Without MCP</button>
+      <button id="btn-with">With MCP</button>
+    </div>
+    <div class="diagram" style="margin:0;">
+      <svg id="mn-svg" viewBox="0 0 600 260" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+      </svg>
+    </div>
+    <div class="toggle-count" id="mn-count"></div>
+  </div>
+
+  <p>MCP standardizes the two halves of that problem separately. A <strong>server</strong> wraps a tool or system once and exposes its capabilities — tools, and optionally data ("resources") and reusable prompt templates — through one common interface, self-described so any client can discover what's available without hand-written glue. A <strong>client</strong> (the agent host) speaks that same interface to <em>any</em> MCP server, known or brand new, without writing per-tool integration code. Build a server once; every MCP-speaking agent can use it. Build a client once; it can use every MCP server that exists. <em>N × M</em> collapses toward <em>N + M</em>.</p>
+
+  <p class="callout">The analogy I keep coming back to: before USB, every peripheral needed its own port and its own driver logic baked into the machine. USB didn't make peripherals more powerful — it made the <em>interface</em> uniform, so anything speaking USB could plug into anything else speaking USB. MCP is doing the same job for "AI agent talks to external system," not "external system exists."</p>
+
+  <p>A few concrete things MCP standardizes that raw API access leaves you to reinvent every time: tool <em>discovery</em> (a client can ask a server "what can you do?" and get back structured, model-readable descriptions, instead of a human reading API docs and hand-writing a tool schema); a consistent way to pass structured arguments and get structured results back; and a transport-agnostic connection (a server can run locally over stdio for a tool on your machine, or remotely over HTTP for a hosted service, with the client code mostly unbothered by which). None of this makes any single integration impossible without MCP — it makes the tenth integration as cheap as the first.</p>
+
+  <h2>How a coding agent actually works</h2>
+
+  <p>Strip away the branding and a coding agent is the same ReAct loop as any other agent, wired to a particular set of tools: read a file, edit a file (usually as a precise find-and-replace rather than a full rewrite, so a small fix doesn't risk rewriting the whole file), search the codebase (grep-like text search, or a directory listing), and — the one that matters most — <strong>run a shell command.</strong></p>
+
+  <p>That last tool is doing more work than it looks like. It's how the agent runs the compiler, the test suite, the linter, or a one-off script to check a hypothesis. And that turns out to be the single biggest thing separating coding agents from most other kinds of agents.</p>
+
+  <h2>What actually makes a coding agent different</h2>
+
+  <p>Not the fact that it "writes code" — plenty of general-purpose agents can output a code snippet. The real difference is structural:</p>
+
+  <table>
+    <tr><th></th><th>General-purpose agent</th><th>Coding agent</th></tr>
+    <tr>
+      <td>Where state lives</td>
+      <td>Mostly in the conversation</td>
+      <td>In the filesystem — a persistent workspace that outlives any one conversation turn</td>
+    </tr>
+    <tr>
+      <td>How it checks its own work</td>
+      <td>Usually can't — has to trust its own reasoning, or wait for a human</td>
+      <td>Can run the compiler / test suite and get an objective pass/fail</td>
+    </tr>
+    <tr>
+      <td>Typical action</td>
+      <td>Call a scoped API (book a flight, send a message)</td>
+      <td>Execute arbitrary shell commands — far more powerful, far less contained</td>
+    </tr>
+    <tr>
+      <td>Failure mode</td>
+      <td>Wrong answer, contained to the conversation</td>
+      <td>Wrong answer that edits real files, runs real commands, or ships</td>
+    </tr>
+  </table>
+
+  <p>The middle row is the one I'd underline. A travel-booking agent that books the wrong flight has no built-in mechanism to notice it was wrong — the only signal is a human complaining afterward. A coding agent that writes a broken function can <em>run the test suite itself</em> and get an objective, automated verdict before anyone else even sees the change. That closed feedback loop — write code, run tests, read the failure, fix, re-run — is what lets coding agents iterate autonomously across many steps in a way that's much harder to pull off safely in domains without a compiler standing in as ground truth.</p>
+
+  <p>It cuts the other way too. That same shell-access tool is exactly why coding agents need more scaffolding around them, not less: sandboxing, permission prompts before destructive commands, git as an undo button, and (per my <a href="how-coding-agents-work.html">earlier notes</a>) a memory layer, because a workspace that persists across sessions is worth remembering things about. A support agent restricted to three well-scoped API calls barely needs any of that. A coding agent holding a shell absolutely does.</p>
+
+  <p>Put plainly: <strong>a coding agent isn't a smarter agent, it's an agent given a more dangerous, more powerful tool (the shell) plus, fortunately, a built-in way to grade its own homework (the test suite) that most other agents don't get.</strong> Both halves of that trade explain almost everything about how coding agents are built differently from the rest of the field.</p>
+
+  <p class="endnote">Personal notes, simplified on purpose. If something here is wrong or has moved on since I wrote it, <a href="mailto:lsscecilia8888@gmail.com">let me know</a>.</p>
+
+</div>
+
+<script>
+(function(){
+  var svg = document.getElementById('mn-svg');
+  var countEl = document.getElementById('mn-count');
+  var btnWithout = document.getElementById('btn-without');
+  var btnWith = document.getElementById('btn-with');
+
+  var agents = ['agent A','agent B','agent C'];
+  var tools = ['tool 1','tool 2','tool 3','tool 4'];
+
+  function renderWithout(){
+    var lines = '';
+    var ax = 90, ay0 = 40, aStep = 60;
+    var tx = 480, ty0 = 20, tStep = 50;
+    agents.forEach(function(a,i){
+      tools.forEach(function(t,j){
+        lines += '<line x1="'+(ax+40)+'" y1="'+(ay0+i*aStep+16)+'" x2="'+(tx-10)+'" y2="'+(ty0+j*tStep+14)+'" stroke="#b3541e" stroke-width="0.8" opacity="0.55"/>';
+      });
+    });
+    var nodes = '';
+    agents.forEach(function(a,i){
+      nodes += '<rect x="'+ax+'" y="'+(ay0+i*aStep)+'" width="90" height="32" rx="3" fill="#faf7f2" stroke="#1c1a17" stroke-width="1.2"/>';
+      nodes += '<text x="'+(ax+45)+'" y="'+(ay0+i*aStep+21)+'" text-anchor="middle" font-size="11" fill="#1c1a17">'+a+'</text>';
+    });
+    tools.forEach(function(t,j){
+      nodes += '<rect x="'+tx+'" y="'+(ty0+j*tStep)+'" width="90" height="28" rx="3" fill="none" stroke="#75705f" stroke-width="1.2"/>';
+      nodes += '<text x="'+(tx+45)+'" y="'+(ty0+j*tStep+18)+'" text-anchor="middle" font-size="10.5" fill="#75705f">'+t+'</text>';
+    });
+    svg.innerHTML = lines + nodes;
+    countEl.innerHTML = '3 agents × 4 tools = <strong>12</strong> bespoke integrations';
+  }
+
+  function renderWith(){
+    var ax = 90, ay0 = 40, aStep = 60;
+    var mx = 280, my = 108;
+    var tx = 480, ty0 = 20, tStep = 50;
+    var lines = '';
+    agents.forEach(function(a,i){
+      lines += '<line x1="'+(ax+90)+'" y1="'+(ay0+i*aStep+16)+'" x2="'+mx+'" y2="'+(my+22)+'" stroke="#b3541e" stroke-width="1" opacity="0.8"/>';
+    });
+    tools.forEach(function(t,j){
+      lines += '<line x1="'+(mx+140)+'" y1="'+(my+22)+'" x2="'+tx+'" y2="'+(ty0+j*tStep+14)+'" stroke="#4f7a5e" stroke-width="1" opacity="0.8"/>';
+    });
+    var nodes = '';
+    agents.forEach(function(a,i){
+      nodes += '<rect x="'+ax+'" y="'+(ay0+i*aStep)+'" width="90" height="32" rx="3" fill="#faf7f2" stroke="#1c1a17" stroke-width="1.2"/>';
+      nodes += '<text x="'+(ax+45)+'" y="'+(ay0+i*aStep+21)+'" text-anchor="middle" font-size="11" fill="#1c1a17">'+a+'</text>';
+    });
+    nodes += '<rect x="'+mx+'" y="'+my+'" width="140" height="44" rx="3" fill="#faf7f2" stroke="#b3541e" stroke-width="1.6"/>';
+    nodes += '<text x="'+(mx+70)+'" y="'+(my+27)+'" text-anchor="middle" font-size="11.5" fill="#1c1a17">MCP</text>';
+    tools.forEach(function(t,j){
+      nodes += '<rect x="'+tx+'" y="'+(ty0+j*tStep)+'" width="90" height="28" rx="3" fill="none" stroke="#75705f" stroke-width="1.2"/>';
+      nodes += '<text x="'+(tx+45)+'" y="'+(ty0+j*tStep+18)+'" text-anchor="middle" font-size="10.5" fill="#75705f">'+t+'</text>';
+    });
+    svg.innerHTML = lines + nodes;
+    countEl.innerHTML = '3 agents + 4 tools = <strong>7</strong> integrations, each built once';
+  }
+
+  btnWithout.addEventListener('click', function(){
+    btnWithout.classList.add('active'); btnWith.classList.remove('active'); renderWithout();
+  });
+  btnWith.addEventListener('click', function(){
+    btnWith.classList.add('active'); btnWithout.classList.remove('active'); renderWith();
+  });
+  renderWithout();
+})();
+</script>
+
+</body>
+</html>
