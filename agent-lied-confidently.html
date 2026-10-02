@@ -1,0 +1,407 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>The Day the Agent Lied to Us Confidently — Cecilia Lee</title>
+<meta name="description" content="A field story about wiring a code knowledge graph into an AI coding agent — and the three mistakes that taught us the graph needed to know its own blind spots.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf7f2; --text:#1c1a17; --muted:#75705f; --accent:#b3541e; --green:#4f7a5e;
+    --line:rgba(28,26,23,0.12); --box:rgba(28,26,23,0.04);
+    --serif:'Newsreader', serif; --mono:'JetBrains Mono', monospace;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--serif); font-size:17.5px; line-height:1.68;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:680px; margin:0 auto; padding:56px 24px 96px; }
+  a{ color:var(--text); text-decoration:underline; text-decoration-color:var(--accent); text-underline-offset:3px; }
+  a:hover{ color:var(--accent); }
+  a:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .back{ font-family:var(--mono); font-size:12px; letter-spacing:0.04em; text-decoration:none; color:var(--muted); display:inline-block; margin-bottom:40px; }
+  .back:hover{ color:var(--accent); }
+  h1{ font-weight:600; font-size:1.85rem; line-height:1.2; margin:0 0 10px; letter-spacing:-0.01em; }
+  .standfirst{ font-style:italic; color:var(--muted); margin:0 0 8px; font-size:1.02rem; }
+  .meta{ font-family:var(--mono); font-size:11.5px; color:var(--muted); margin:0 0 40px; padding-bottom:20px; border-bottom:1px solid var(--line); }
+  h2{ font-weight:600; font-size:1.3rem; margin:48px 0 12px; letter-spacing:-0.005em; }
+  p{ margin:0 0 16px; }
+  strong{ font-weight:600; }
+  code{ font-family:var(--mono); font-size:0.82em; background:var(--box); padding:1px 5px; border-radius:3px; }
+  .callout{ border-left:3px solid var(--accent); padding:2px 0 2px 18px; margin:22px 0; font-style:italic; }
+  table{ width:100%; border-collapse:collapse; margin:16px 0 24px; font-size:0.88rem; }
+  th{ font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.08em; color:var(--muted); text-align:left; font-weight:500; padding:8px 10px; border-bottom:1.5px solid var(--text); }
+  td{ padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td:first-child{ font-weight:600; white-space:nowrap; }
+  .endnote{ margin-top:48px; padding-top:20px; border-top:1px solid var(--line); font-size:0.9rem; color:var(--muted); font-style:italic; }
+
+  .diagram{ margin:24px 0 28px; padding:20px 14px; background:var(--box); border:1px solid var(--line); border-radius:4px; overflow-x:auto; }
+  .diagram svg{ display:block; margin:0 auto; max-width:100%; height:auto; }
+  ul.layers{ margin:0 0 16px; padding-left:22px; }
+  ul.layers li{ margin-bottom:10px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back" href="index.html">← cecilia lee</a>
+
+  <h1>The Day the Agent Lied to Us Confidently</h1>
+  <p class="standfirst">A field story about wiring a code knowledge graph into our AI coding agent — and three mistakes that taught the graph to know its own blind spots.</p>
+  <p class="meta">august 2026 · field notes</p>
+
+  <p>It started with a message that read, innocently enough: "hey why did the agent say this function doesn't exist? I'm looking at it right now."</p>
+
+  <p>We'd had an AI coding agent running against a sprawling microservices codebase — six services, tens of thousands of files — for a few weeks by then. It was good at the small stuff: find this file, fix this test, rename this variable. But the moment someone asked it something an actual architect would ask — "how does this request flow from end to end?" — it fell apart in a very specific, very embarrassing way. It didn't say "I don't know." It confidently grepped its way to a plausible-looking answer, presented it with full conviction, and moved on. Nobody caught the mistake until a human who actually knew the system read the output and went "...no."</p>
+
+  <p>That was the real problem. Not "the agent is slow" — slow we could live with. "The agent is wrong in a way that sounds right" was the one that kept us up. This is the story of the fix, and three mistakes along the way that taught us more than the fix itself did.</p>
+
+  <h2>The idea: read the codebase once, not every session</h2>
+
+  <p>The underlying waste was obvious once we measured it: every time a developer asked "how does X work," the agent re-discovered the answer from scratch — reading a dozen-plus files, following imports and calls, burning real tokens and real minutes. The same flow got re-discovered by every developer, every session. One heavy user alone burned through nearly 2 million tokens across 15 sessions, mostly re-doing the same codebase archaeology.</p>
+
+  <p>The fix: read the codebase once into a structural graph — classes, methods, calls, dependencies, as nodes and edges — and let the agent query the graph instead of re-reading the files every time. We used <a href="https://github.com/Graphify-Labs/graphify">Graphify</a>, an open-source tool built exactly for this — it parses a codebase with real AST parsers and turns it into a queryable graph, deterministically, with zero LLM tokens spent on extraction.</p>
+
+  <h2>The architecture</h2>
+
+  <p>Five layers, each with one job. Data flows up on a schedule; questions flow down on demand.</p>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 480" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <defs>
+      <marker id="al" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+        <path d="M0,0 L7,3.5 L0,7 z" fill="#75705f"/>
+      </marker>
+    </defs>
+
+    <rect x="180" y="15" width="280" height="50" rx="4" fill="#faf7f2" stroke="#b3541e" stroke-width="2"/>
+    <text x="320" y="36" text-anchor="middle" font-size="12.5" fill="#1c1a17">Layer 0 — Extraction engine</text>
+    <text x="320" y="52" text-anchor="middle" font-size="9.5" fill="#75705f">Graphify fork · AST parse · 0 LLM tokens</text>
+
+    <line x1="320" y1="65" x2="320" y2="95" stroke="#75705f" stroke-width="1.3" marker-end="url(#al)"/>
+
+    <rect x="140" y="100" width="360" height="54" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.6"/>
+    <text x="320" y="122" text-anchor="middle" font-size="12.5" fill="#1c1a17">Layer 1 — Query server (MCP)</text>
+    <text x="320" y="138" text-anchor="middle" font-size="9.5" fill="#75705f">wraps the graph engine · vocab lookup, repo routing</text>
+
+    <line x1="320" y1="154" x2="320" y2="184" stroke="#75705f" stroke-width="1.3" marker-end="url(#al)"/>
+
+    <rect x="140" y="189" width="360" height="54" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.6"/>
+    <text x="320" y="211" text-anchor="middle" font-size="12.5" fill="#1c1a17">Layer 2 — Distribution repo</text>
+    <text x="320" y="227" text-anchor="middle" font-size="9.5" fill="#75705f">one repo, one graph per service, versioned alongside the code</text>
+
+    <line x1="320" y1="243" x2="320" y2="273" stroke="#75705f" stroke-width="1.3" marker-end="url(#al)"/>
+
+    <rect x="140" y="278" width="360" height="54" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.6"/>
+    <text x="320" y="300" text-anchor="middle" font-size="12.5" fill="#1c1a17">Layer 3 — Refresh automation</text>
+    <text x="320" y="316" text-anchor="middle" font-size="9.5" fill="#75705f">scheduled agent: check for changes, rebuild, push — no human needed</text>
+
+    <line x1="320" y1="332" x2="320" y2="362" stroke="#75705f" stroke-width="1.3" marker-end="url(#al)"/>
+
+    <rect x="180" y="367" width="280" height="50" rx="4" fill="#faf7f2" stroke="#b3541e" stroke-width="2"/>
+    <text x="320" y="388" text-anchor="middle" font-size="12.5" fill="#1c1a17">Layer 4 — AI coding assistant</text>
+    <text x="320" y="404" text-anchor="middle" font-size="9.5" fill="#75705f">dev asks a question · agent calls the query server</text>
+
+    <path d="M 500 127 Q 560 220 500 305" fill="none" stroke="#75705f" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#al)"/>
+    <text x="600" y="220" text-anchor="middle" font-size="9.5" fill="#75705f" transform="rotate(90 600 220)">build flow (scheduled)</text>
+
+    <path d="M 140 127 Q 70 260 182 388" fill="none" stroke="#b3541e" stroke-width="1.4" marker-end="url(#al)"/>
+    <text x="55" y="260" text-anchor="middle" font-size="9.5" fill="#b3541e" transform="rotate(-90 55 260)">query flow (on demand)</text>
+
+    <text x="320" y="450" text-anchor="middle" font-size="11" fill="#1c1a17">build happens once, on a schedule — queries happen constantly, cheaply</text>
+  </svg>
+  </div>
+
+  <ul class="layers">
+    <li><strong>Layer 0 — Extraction engine.</strong> Reads source code with real AST parsers (not regex, not an LLM) and outputs a graph: classes, methods, and fields as nodes; calls, references, and inheritance as edges. Deterministic, zero LLM tokens.</li>
+    <li><strong>Layer 1 — Query server.</strong> A thin server wrapping the graph engine's own query tools, speaking MCP so any AI assistant can call it. Adds two things the raw engine didn't have: routing between multiple services' graphs, and a vocabulary-lookup tool (the fix for mistake two, below).</li>
+    <li><strong>Layer 2 — Distribution.</strong> One repository holding every service's pre-built graph, versioned the same way the code itself is — a single clone gets a team everything.</li>
+    <li><strong>Layer 3 — Refresh automation.</strong> A scheduled agent checks each source repo for new commits, rebuilds only what changed, and pushes the update — fire-and-forget, no one has to remember to do this manually.</li>
+    <li><strong>Layer 4 — The AI coding assistant.</strong> Where a developer actually asks a question. The assistant calls the query server's tools instead of grepping the codebase cold.</li>
+  </ul>
+
+  <p>One question worth answering directly: why a shared, centrally-refreshed graph at all, rather than just having each developer build their own copy locally? Three reasons. A full build takes real time — roughly ten minutes for one mid-sized service — and that cost should be paid once per actual code change, not once per developer who wants a fresh graph. Consistency matters more than it sounds: with one canonical graph per service, "how stale am I" has a clean answer (compare my checkout to one known commit); with everyone building their own, two people could be looking at two different snapshots with no shared way to tell whose is fresher — which quietly undermines the entire staleness-checking idea below. And onboarding gets much simpler: a new developer pulls a few megabytes of already-built graph instead of waiting through a first build before the tool is useful at all.</p>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 260" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <defs><marker id="mc" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0 L7,3.5 L0,7 z" fill="#75705f"/></marker></defs>
+
+    <text x="150" y="22" text-anchor="middle" font-size="11" fill="#b3541e">per-dev local builds</text>
+    <rect x="30" y="35" width="90" height="40" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="75" y="58" text-anchor="middle" font-size="10">dev A</text>
+    <rect x="130" y="35" width="90" height="40" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="175" y="58" text-anchor="middle" font-size="10">dev B</text>
+    <rect x="230" y="35" width="90" height="40" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="275" y="58" text-anchor="middle" font-size="10">dev C</text>
+    <line x1="75" y1="75" x2="75" y2="100" stroke="#b3541e" stroke-width="1.2" marker-end="url(#mc)"/>
+    <line x1="175" y1="75" x2="175" y2="100" stroke="#b3541e" stroke-width="1.2" marker-end="url(#mc)"/>
+    <line x1="275" y1="75" x2="275" y2="100" stroke="#b3541e" stroke-width="1.2" marker-end="url(#mc)"/>
+    <rect x="30" y="105" width="90" height="34" rx="3" fill="#fdf6ee" stroke="#b3541e" stroke-width="1.4"/>
+    <text x="75" y="126" text-anchor="middle" font-size="9">builds @ T1</text>
+    <rect x="130" y="105" width="90" height="34" rx="3" fill="#fdf6ee" stroke="#b3541e" stroke-width="1.4"/>
+    <text x="175" y="126" text-anchor="middle" font-size="9">builds @ T2</text>
+    <rect x="230" y="105" width="90" height="34" rx="3" fill="#fdf6ee" stroke="#b3541e" stroke-width="1.4"/>
+    <text x="275" y="126" text-anchor="middle" font-size="9">builds @ T3</text>
+    <text x="175" y="160" text-anchor="middle" font-size="10" fill="#b3541e">3× the build cost, 3 different snapshots</text>
+    <text x="175" y="176" text-anchor="middle" font-size="10" fill="#b3541e">— whose is "fresh"?</text>
+
+    <text x="480" y="22" text-anchor="middle" font-size="11" fill="#4f7a5e">centralized refresh</text>
+    <rect x="400" y="35" width="90" height="40" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="445" y="58" text-anchor="middle" font-size="10">dev A</text>
+    <rect x="500" y="35" width="90" height="40" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="545" y="58" text-anchor="middle" font-size="10">dev B</text>
+    <line x1="445" y1="75" x2="470" y2="100" stroke="#4f7a5e" stroke-width="1.2" marker-end="url(#mc)"/>
+    <line x1="545" y1="75" x2="520" y2="100" stroke="#4f7a5e" stroke-width="1.2" marker-end="url(#mc)"/>
+    <rect x="420" y="105" width="150" height="34" rx="3" fill="#eef5f0" stroke="#4f7a5e" stroke-width="1.8"/>
+    <text x="495" y="126" text-anchor="middle" font-size="9.5">one shared graph, one commit</text>
+    <text x="495" y="160" text-anchor="middle" font-size="10" fill="#4f7a5e">1× build cost, everyone reads</text>
+    <text x="495" y="176" text-anchor="middle" font-size="10" fill="#4f7a5e">the same known snapshot</text>
+  </svg>
+  </div>
+
+  <p>The results, once all six services were mapped — roughly 141,000 nodes and 487,000 edges in total — were a genuine step change: answering an architecture question dropped from about 150,000 tokens and five minutes to around 10,000 tokens and thirty seconds. In head-to-head benchmarks against the old grep-and-read approach, the graph-based answers won 14 out of 15 times, at roughly a twentieth of the token cost.</p>
+
+  <p>That's the headline number. Getting there took three mistakes, each one teaching the same lesson from a different angle.</p>
+
+  <h2>Mistake one: giving it a map instead of a flashlight</h2>
+
+  <p>Our first version wired the graph up to the agent directly — ask a question, the graph answers. It worked, technically. But it was overkill for most questions. The large majority of what people actually asked was "orient me" — not "trace this exact edge case." We were making the agent do expensive graph traversal to answer questions a cheap, pre-generated summary could've answered just as well.</p>
+
+  <p>So we layered it: a cheap, automatically-refreshed report — key hub files, clusters, a call-flow summary — answers the orientation questions for free, with no live computation. Only if that doesn't resolve it does the agent do a real graph query. And only if the graph itself comes up empty does it fall back to reading raw source.</p>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 260" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <defs><marker id="m1" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0 L7,3.5 L0,7 z" fill="#75705f"/></marker></defs>
+
+    <rect x="30" y="20" width="220" height="56" rx="4" fill="#eef5f0" stroke="#4f7a5e" stroke-width="2"/>
+    <text x="140" y="43" text-anchor="middle" font-size="12" fill="#1c1a17">1 · pre-generated report</text>
+    <text x="140" y="60" text-anchor="middle" font-size="9.5" fill="#4f7a5e">free · refreshed daily</text>
+
+    <line x1="140" y1="76" x2="140" y2="106" stroke="#75705f" stroke-width="1.3" marker-end="url(#m1)"/>
+    <text x="175" y="95" font-size="9.5" fill="#75705f">not enough?</text>
+
+    <rect x="30" y="111" width="220" height="56" rx="4" fill="#fdf6ee" stroke="#b3541e" stroke-width="1.8"/>
+    <text x="140" y="134" text-anchor="middle" font-size="12" fill="#1c1a17">2 · live graph query</text>
+    <text x="140" y="151" text-anchor="middle" font-size="9.5" fill="#75705f">real traversal, specific Qs</text>
+
+    <line x1="140" y1="167" x2="140" y2="197" stroke="#75705f" stroke-width="1.3" marker-end="url(#m1)"/>
+    <text x="195" y="186" font-size="9.5" fill="#75705f">came up empty?</text>
+
+    <rect x="30" y="202" width="220" height="50" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="140" y="223" text-anchor="middle" font-size="12" fill="#1c1a17">3 · raw source</text>
+    <text x="140" y="239" text-anchor="middle" font-size="9.5" fill="#75705f">slowest · last resort only</text>
+
+    <text x="430" y="40" font-size="11" fill="#1c1a17">Each step up costs more —</text>
+    <text x="430" y="58" font-size="11" fill="#1c1a17">~90% of questions never</text>
+    <text x="430" y="76" font-size="11" fill="#1c1a17">need to leave step 1.</text>
+  </svg>
+  </div>
+
+  <p class="callout">Lesson one: the expensive tool should be the last resort, not the first instinct. Most questions don't deserve your most powerful weapon.</p>
+
+  <h2>Mistake two: the graph that couldn't take a hint</h2>
+
+  <p>Then someone asked "what calls the payment handler?" and got back nothing. Not an error — worse, a <em>quiet</em> empty result that looked exactly like a legitimate "nothing calls this."</p>
+
+  <p>Except something obviously did. We just hadn't named it "handler." The codebase called it <code>Executor</code>. The graph matched on near-exact substrings — no synonyms, no stemming — so "handler" and "executor" were, as far as the tool was concerned, two unrelated words in two unrelated universes.</p>
+
+  <p>This one stung because it was invisible. A wrong answer you can catch. A silent empty answer that reads as "there's nothing here" actively teaches the wrong lesson. The fix became a hard rule, not a suggestion: before ever querying the graph, go get the actual vocabulary the graph knows — the real words used in the codebase's own symbol names — and translate the question into <em>those</em> words first. We built this as its own tool the agent must call before every query: it hands back the top few hundred real tokens from the codebase, plus the handful of real relationship types that exist between nodes, so the agent is never guessing a word — or guessing whether a relationship is called <code>call</code> or <code>calls</code> — it's choosing from what's actually there.</p>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 260" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <defs><marker id="m2" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0 L7,3.5 L0,7 z" fill="#75705f"/></marker></defs>
+
+    <text x="160" y="25" text-anchor="middle" font-size="11" fill="#b3541e">BEFORE</text>
+    <rect x="30" y="35" width="260" height="46" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="160" y="63" text-anchor="middle" font-size="11.5">"what calls the payment handler?"</text>
+
+    <line x1="160" y1="81" x2="160" y2="111" stroke="#75705f" stroke-width="1.3" marker-end="url(#m2)"/>
+
+    <rect x="30" y="116" width="260" height="46" rx="4" fill="#fdf6ee" stroke="#b3541e" stroke-width="1.8"/>
+    <text x="160" y="139" text-anchor="middle" font-size="11">query: "handler" — codebase</text>
+    <text x="160" y="153" text-anchor="middle" font-size="11">says "Executor". no match.</text>
+
+    <line x1="160" y1="162" x2="160" y2="192" stroke="#b3541e" stroke-width="1.3" marker-end="url(#m2)"/>
+    <rect x="30" y="197" width="260" height="40" rx="4" fill="none" stroke="#b3541e" stroke-width="1.6" stroke-dasharray="5 4"/>
+    <text x="160" y="222" text-anchor="middle" font-size="11.5" fill="#b3541e">silent empty result</text>
+
+    <text x="470" y="25" text-anchor="middle" font-size="11" fill="#4f7a5e">AFTER</text>
+    <rect x="340" y="35" width="260" height="46" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="470" y="63" text-anchor="middle" font-size="11.5">"what calls the payment handler?"</text>
+
+    <line x1="470" y1="81" x2="470" y2="111" stroke="#75705f" stroke-width="1.3" marker-end="url(#m2)"/>
+
+    <rect x="340" y="116" width="260" height="46" rx="4" fill="#eef5f0" stroke="#4f7a5e" stroke-width="1.8"/>
+    <text x="470" y="139" text-anchor="middle" font-size="11">get_vocab first: real tokens</text>
+    <text x="470" y="153" text-anchor="middle" font-size="11">include "executor", "validator"</text>
+
+    <line x1="470" y1="162" x2="470" y2="192" stroke="#4f7a5e" stroke-width="1.3" marker-end="url(#m2)"/>
+    <rect x="340" y="197" width="260" height="40" rx="4" fill="#eef5f0" stroke="#4f7a5e" stroke-width="1.8"/>
+    <text x="470" y="222" text-anchor="middle" font-size="11.5" fill="#4f7a5e">query "executor" → real answer</text>
+  </svg>
+  </div>
+
+  <p class="callout">Lesson two: when a system matches on names, "no results" and "wrong words" look identical from the outside. You have to check the vocabulary before you trust the silence.</p>
+
+  <h2>Mistake three: the ghost of the main branch</h2>
+
+  <p>Just when the tool started to feel trustworthy, it broke trust again — more subtly. An engineer asked the agent about a method they'd renamed two days earlier, on their own feature branch. The agent answered using the <em>old</em> name, with total confidence, and was completely wrong — because the graph was a snapshot of the main branch, rebuilt on a schedule, and this branch's changes hadn't merged yet.</p>
+
+  <p>This forced us to be honest about what a knowledge graph actually is: not a live view of reality, but a photograph. Photographs get stale the moment reality moves on. The scary part wasn't that it was stale — every cache is, sometimes. The scary part was that the agent had no idea it <em>might</em> be stale, so it never hedged.</p>
+
+  <p>We built in a mandatory check before trusting any graph answer about a specific file: what branch are you on, is this file modified locally, how far behind the main branch is your checkout. Depending on the answer, the agent either trusts the graph outright, trusts it for everything except the file it just edited, or — on a divergent branch — treats the graph as "here's what's on main, but don't believe it about anything you've personally touched."</p>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 230" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <defs><marker id="m3" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0 L7,3.5 L0,7 z" fill="#75705f"/></marker></defs>
+
+    <rect x="230" y="15" width="180" height="40" rx="4" fill="#fdf6ee" stroke="#b3541e" stroke-width="2"/>
+    <text x="320" y="39" text-anchor="middle" font-size="11.5">before trusting MCP:</text>
+
+    <line x1="320" y1="55" x2="320" y2="74" stroke="#75705f" stroke-width="1.3"/>
+    <text x="335" y="68" text-anchor="start" font-size="10" fill="#75705f">check git state</text>
+
+    <line x1="320" y1="74" x2="110" y2="81" stroke="#75705f" stroke-width="1.2" marker-end="url(#m3)"/>
+    <line x1="320" y1="74" x2="320" y2="81" stroke="#75705f" stroke-width="1.2" marker-end="url(#m3)"/>
+    <line x1="320" y1="74" x2="530" y2="81" stroke="#75705f" stroke-width="1.2" marker-end="url(#m3)"/>
+
+    <rect x="20" y="85" width="180" height="56" rx="4" fill="#eef5f0" stroke="#4f7a5e" stroke-width="1.8"/>
+    <text x="110" y="107" text-anchor="middle" font-size="11">on main, clean,</text>
+    <text x="110" y="122" text-anchor="middle" font-size="11">up to date</text>
+    <text x="110" y="135" text-anchor="middle" font-size="9.5" fill="#4f7a5e">→ trust the graph</text>
+
+    <rect x="230" y="85" width="180" height="56" rx="4" fill="#fff8ee" stroke="#b3541e" stroke-width="1.6"/>
+    <text x="320" y="107" text-anchor="middle" font-size="11">on main, file</text>
+    <text x="320" y="122" text-anchor="middle" font-size="11">modified locally</text>
+    <text x="320" y="135" text-anchor="middle" font-size="9.5" fill="#b3541e">→ trust it, except that file</text>
+
+    <rect x="440" y="85" width="180" height="56" rx="4" fill="none" stroke="#b3541e" stroke-width="1.8" stroke-dasharray="5 4"/>
+    <text x="530" y="107" text-anchor="middle" font-size="11">on a feature</text>
+    <text x="530" y="122" text-anchor="middle" font-size="11">branch</text>
+    <text x="530" y="135" text-anchor="middle" font-size="9.5" fill="#b3541e">→ grep for touched files</text>
+
+    <text x="320" y="185" text-anchor="middle" font-size="11" fill="#1c1a17">the graph never guesses which case it's in — the check happens every time</text>
+  </svg>
+  </div>
+
+  <p class="callout">Lesson three: any tool built on a snapshot needs an explicit, checkable answer to "how stale am I right now" — not a disclaimer buried in documentation nobody reads under deadline.</p>
+
+  <h2>Knowing where it doesn't apply at all</h2>
+
+  <p>The three mistakes above were all about making the graph honest within its own domain. But the more basic boundary is simpler: the graph indexes <em>code structure</em> — who calls whom, who extends whom, what clusters with what. It does not index string contents, runtime state, or time.</p>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 260" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <rect x="20" y="15" width="280" height="225" rx="4" fill="none" stroke="#b3541e" stroke-width="1.6"/>
+    <text x="160" y="35" text-anchor="middle" font-size="11.5" fill="#b3541e">✗ use grep for these</text>
+    <text x="160" y="60" text-anchor="middle" font-size="10.5">string literals</text>
+    <text x="160" y="76" text-anchor="middle" font-size="9" fill="#75705f">"where is this SQL defined?"</text>
+    <text x="160" y="100" text-anchor="middle" font-size="10.5">runtime state</text>
+    <text x="160" y="116" text-anchor="middle" font-size="9" fill="#75705f">"when does status flip?"</text>
+    <text x="160" y="140" text-anchor="middle" font-size="10.5">temporal questions</text>
+    <text x="160" y="156" text-anchor="middle" font-size="9" fill="#75705f">"what changed recently?"</text>
+    <text x="160" y="180" text-anchor="middle" font-size="10.5">config values</text>
+    <text x="160" y="196" text-anchor="middle" font-size="9" fill="#75705f">"what's the timeout set to?"</text>
+    <text x="160" y="220" text-anchor="middle" font-size="10.5">your uncommitted WIP</text>
+
+    <rect x="340" y="15" width="280" height="225" rx="4" fill="none" stroke="#4f7a5e" stroke-width="1.8"/>
+    <text x="480" y="35" text-anchor="middle" font-size="11.5" fill="#4f7a5e">✓ use the graph for these</text>
+    <text x="480" y="62" text-anchor="middle" font-size="10.5">"how does X work?"</text>
+    <text x="480" y="78" text-anchor="middle" font-size="9" fill="#75705f">flow / architecture traces</text>
+    <text x="480" y="102" text-anchor="middle" font-size="10.5">"what calls Y?"</text>
+    <text x="480" y="118" text-anchor="middle" font-size="9" fill="#75705f">caller / callee search</text>
+    <text x="480" y="142" text-anchor="middle" font-size="10.5">"path from A to B?"</text>
+    <text x="480" y="158" text-anchor="middle" font-size="9" fill="#75705f">relationship tracing</text>
+    <text x="480" y="182" text-anchor="middle" font-size="10.5">"what depends on X?"</text>
+    <text x="480" y="198" text-anchor="middle" font-size="9" fill="#75705f">structural dependencies</text>
+    <text x="480" y="222" text-anchor="middle" font-size="10.5">"how is X organized?"</text>
+  </svg>
+  </div>
+
+  <p>In benchmark testing, this boundary showed up concretely: the one question type where the graph lost to plain grep was "where is this SQL string literal defined?" — exactly the left-hand column. The graph doesn't index strings; grep does. Rule of thumb: if the answer lives in code structure, use the graph. If it lives in string content, state, time, or config, use grep.</p>
+
+  <h2>Where this goes next</h2>
+
+  <p>Right now the graph is served as a compressed file, loaded whole into memory by the query server. That's genuinely fine at the current size — but it's a deliberate, evidence-gated choice, not a permanent one. The next step under consideration is a proper graph database (something like Neo4j or Amazon Neptune) in place of the flat file: native traversal instead of in-memory search, indexed edges instead of a full load on every startup, and partial reads instead of pulling the whole graph just to answer one question. We're treating this the way any infrastructure migration should be treated — prove the cost reduction and confirm there's no performance regression on a small pilot first, then migrate, rather than adopting new infrastructure on the strength of a good argument alone.</p>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 170" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <defs><marker id="mr" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0 L7,3.5 L0,7 z" fill="#75705f"/></marker></defs>
+
+    <rect x="10" y="55" width="130" height="56" rx="4" fill="#eef5f0" stroke="#4f7a5e" stroke-width="2"/>
+    <text x="75" y="78" text-anchor="middle" font-size="11">Now</text>
+    <text x="75" y="93" text-anchor="middle" font-size="9" fill="#75705f">flat file, in-memory</text>
+
+    <line x1="140" y1="83" x2="172" y2="83" stroke="#75705f" stroke-width="1.3" marker-end="url(#mr)"/>
+
+    <rect x="177" y="55" width="130" height="56" rx="4" fill="#fdf6ee" stroke="#b3541e" stroke-width="2"/>
+    <text x="242" y="78" text-anchor="middle" font-size="11">Pilot</text>
+    <text x="242" y="93" text-anchor="middle" font-size="9" fill="#75705f">measure real savings</text>
+
+    <line x1="307" y1="83" x2="338" y2="83" stroke="#75705f" stroke-width="1.3" marker-end="url(#mr)"/>
+
+    <polygon points="420,38 480,83 420,128 360,83" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="420" y="78" text-anchor="middle" font-size="9">cost ↓,</text>
+    <text x="420" y="92" text-anchor="middle" font-size="9">no regression?</text>
+
+    <line x1="480" y1="83" x2="500" y2="50" stroke="#75705f" stroke-width="1.3" marker-end="url(#mr)"/>
+    <text x="505" y="42" text-anchor="start" font-size="9" fill="#4f7a5e">yes</text>
+    <rect x="505" y="15" width="125" height="50" rx="4" fill="none" stroke="#4f7a5e" stroke-width="1.8"/>
+    <text x="567" y="33" text-anchor="middle" font-size="10">graph DB</text>
+    <text x="567" y="48" text-anchor="middle" font-size="8.5" fill="#75705f">native traversal</text>
+
+    <line x1="480" y1="83" x2="500" y2="116" stroke="#75705f" stroke-width="1.3" marker-end="url(#mr)"/>
+    <text x="505" y="130" text-anchor="start" font-size="9" fill="#75705f">no</text>
+    <rect x="505" y="105" width="125" height="50" rx="4" fill="none" stroke="#75705f" stroke-width="1.4" stroke-dasharray="5 4"/>
+    <text x="567" y="123" text-anchor="middle" font-size="10">stay on file</text>
+    <text x="567" y="138" text-anchor="middle" font-size="8.5" fill="#75705f">no new infra without proof</text>
+  </svg>
+  </div>
+
+  <p>The more interesting direction, once that foundation is in place, is <strong>hybrid search</strong> — combining the graph's structural precision with semantic retrieval. Right now the system answers "what calls X?" beautifully and "what's semantically similar to this problem?" not at all — those are two different retrieval problems, and this project only solves the first one. A vector index alongside the graph would let a query do both: traverse exact structural relationships where the question is precise, and fall back to semantic similarity where the question is fuzzier or the right vocabulary isn't obvious — which, notably, would also soften mistake two from a different angle, since a semantic match doesn't require guessing the codebase's exact word for something. It's the same combination I reached for in a <a href="llm-routing-design.html">different project</a> — keyword-exact and semantic-fuzzy answer different kinds of questions, and a system that can only do one is leaving queries on the table.</p>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 170" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <defs><marker id="mh" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0 L7,3.5 L0,7 z" fill="#75705f"/></marker></defs>
+
+    <rect x="20" y="15" width="260" height="46" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="150" y="37" text-anchor="middle" font-size="11">"what calls X?" — precise</text>
+    <text x="150" y="52" text-anchor="middle" font-size="9" fill="#75705f">→ graph traversal (exact)</text>
+
+    <rect x="20" y="75" width="260" height="46" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.4"/>
+    <text x="150" y="97" text-anchor="middle" font-size="11">"what's similar to this bug?" — fuzzy</text>
+    <text x="150" y="112" text-anchor="middle" font-size="9" fill="#75705f">→ semantic search (vector)</text>
+
+    <line x1="280" y1="38" x2="340" y2="70" stroke="#75705f" stroke-width="1.3" marker-end="url(#mh)"/>
+    <line x1="280" y1="98" x2="340" y2="70" stroke="#75705f" stroke-width="1.3" marker-end="url(#mh)"/>
+
+    <rect x="345" y="45" width="260" height="56" rx="4" fill="#fdf6ee" stroke="#b3541e" stroke-width="2"/>
+    <text x="475" y="68" text-anchor="middle" font-size="11.5">hybrid query layer</text>
+    <text x="475" y="84" text-anchor="middle" font-size="9.5" fill="#75705f">routes each question to the right mechanism</text>
+  </svg>
+  </div>
+
+  <h2>What ties it together</h2>
+
+  <p>All three mistakes are, underneath, the same mistake wearing different clothes: a system that can answer with authority, but had no built-in way to signal <em>when it shouldn't</em>. An overpowered tool answering an easy question doesn't know it's being wasteful. A substring match on the wrong word doesn't know it found nothing because it was asking wrong. A stale snapshot doesn't know it's stale unless you make it check.</p>
+
+  <p>None of the fixes were dramatic rewrites. They were small, almost embarrassing corrections — layer the expensive tool behind cheaper ones, check your vocabulary before trusting silence, check your freshness before trusting an answer. But they only became obvious after watching the agent confidently say something wrong to someone who knew better.</p>
+
+  <p>The throughline, if there is one: build any system that answers questions with authority, and you inherit an obligation to also tell it — and its users — exactly when not to trust itself. The graph didn't need to be perfect. It needed to know its own blind spots and say so.</p>
+
+  <p class="endnote">Details genericized where they'd reveal internal systems or tooling names; the architecture, numbers, and lessons are accurate. If you're building something similar, I'd like to compare notes — <a href="https://github.com/lsscecilia">github.com/lsscecilia</a>.</p>
+
+</div>
+</body>
+</html>
