@@ -1,0 +1,159 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM, Agent, Harness, Skills, Workflow: The Full Stack — Cecilia Lee</title>
+<meta name="description" content="Five words people use interchangeably, defined precisely against each other: the model, the loop around it, the program that executes its requests, the instructions it reads, and the fixed sequence that might contain all of the above.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:opsz,wght@6..72,400;6..72,500;6..72,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#faf7f2; --text:#1c1a17; --muted:#75705f; --accent:#b3541e; --green:#4f7a5e;
+    --line:rgba(28,26,23,0.12); --box:rgba(28,26,23,0.04);
+    --serif:'Newsreader', serif; --mono:'JetBrains Mono', monospace;
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family:var(--serif); font-size:17.5px; line-height:1.68;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{ max-width:680px; margin:0 auto; padding:56px 24px 96px; }
+  a{ color:var(--text); text-decoration:underline; text-decoration-color:var(--accent); text-underline-offset:3px; }
+  a:hover{ color:var(--accent); }
+  a:focus-visible{ outline:2px solid var(--accent); outline-offset:2px; }
+  .back{ font-family:var(--mono); font-size:12px; letter-spacing:0.04em; text-decoration:none; color:var(--muted); display:inline-block; margin-bottom:40px; }
+  .back:hover{ color:var(--accent); }
+  h1{ font-weight:600; font-size:1.85rem; line-height:1.2; margin:0 0 10px; letter-spacing:-0.01em; }
+  .standfirst{ font-style:italic; color:var(--muted); margin:0 0 8px; font-size:1.02rem; }
+  .meta{ font-family:var(--mono); font-size:11.5px; color:var(--muted); margin:0 0 40px; padding-bottom:20px; border-bottom:1px solid var(--line); }
+  h2{ font-weight:600; font-size:1.3rem; margin:48px 0 12px; letter-spacing:-0.005em; }
+  p{ margin:0 0 16px; }
+  strong{ font-weight:600; }
+  code{ font-family:var(--mono); font-size:0.82em; background:var(--box); padding:1px 5px; border-radius:3px; }
+  ul, ol{ margin:0 0 16px; padding-left:24px; }
+  li{ margin-bottom:8px; }
+  .callout{ border-left:3px solid var(--accent); padding:2px 0 2px 18px; margin:22px 0; font-style:italic; }
+  table{ width:100%; border-collapse:collapse; margin:16px 0 26px; font-size:0.87rem; }
+  th{ font-family:var(--mono); font-size:10.5px; text-transform:uppercase; letter-spacing:0.07em; color:var(--muted); text-align:left; font-weight:500; padding:8px 10px; border-bottom:1.5px solid var(--text); }
+  td{ padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  td:first-child{ font-weight:600; white-space:nowrap; }
+  .diagram{ margin:24px 0 28px; padding:20px 14px; background:var(--box); border:1px solid var(--line); border-radius:4px; overflow-x:auto; }
+  .diagram svg{ display:block; margin:0 auto; max-width:100%; height:auto; }
+  .endnote{ margin-top:48px; padding-top:20px; border-top:1px solid var(--line); font-size:0.9rem; color:var(--muted); font-style:italic; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <a class="back" href="index.html">← cecilia lee</a>
+
+  <h1>LLM, Agent, Harness, Skills, Workflow: The Full Stack</h1>
+  <p class="standfirst">Five words everyone uses loosely, defined precisely against each other — from the model that only predicts text, up to the fixed sequence that might call it once, many times, or not at all.</p>
+  <p class="meta">september 2026 · notes</p>
+
+  <p>In <a href="how-coding-agents-work.html">earlier notes</a> I covered the ReAct loop, and in <a href="tools-mcp-coding-agents.html">another piece</a> how tools and MCP fit in. The question I kept getting asked after both — and kept answering slightly differently each time — was how the five pieces actually stack: the model, the agent, the harness, the skills, and the workflow around all of it. This is my attempt to fix that, cleanly, once.</p>
+
+  <h2>The stack, bottom to top</h2>
+
+  <div class="diagram" aria-hidden="true">
+  <svg viewBox="0 0 640 520" xmlns="http://www.w3.org/2000/svg" font-family="JetBrains Mono, monospace">
+    <defs><marker id="s1" markerWidth="9" markerHeight="9" refX="7" refY="3.5" orient="auto">
+      <path d="M0,0 L7,3.5 L0,7 z" fill="#75705f"/></marker></defs>
+
+    <rect x="170" y="440" width="300" height="60" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.6"/>
+    <text x="320" y="464" text-anchor="middle" font-size="12.5">LLM</text>
+    <text x="320" y="482" text-anchor="middle" font-size="9.5" fill="#75705f">text in, text out — no memory, no hands</text>
+
+    <line x1="320" y1="440" x2="320" y2="410" stroke="#75705f" stroke-width="1.3" marker-end="url(#s1)"/>
+
+    <rect x="130" y="350" width="380" height="60" rx="4" fill="#fdf6ee" stroke="#b3541e" stroke-width="2"/>
+    <text x="320" y="374" text-anchor="middle" font-size="12.5">Agent</text>
+    <text x="320" y="392" text-anchor="middle" font-size="9.5" fill="#75705f">the loop: thought → action → observation → repeat</text>
+
+    <line x1="320" y1="350" x2="320" y2="320" stroke="#75705f" stroke-width="1.3" marker-end="url(#s1)"/>
+
+    <rect x="100" y="260" width="200" height="50" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.6"/>
+    <text x="200" y="282" text-anchor="middle" font-size="12">Harness</text>
+    <text x="200" y="298" text-anchor="middle" font-size="9" fill="#75705f">runs it; holds the permissions</text>
+
+    <rect x="340" y="260" width="200" height="50" rx="4" fill="none" stroke="#1c1a17" stroke-width="1.6"/>
+    <text x="440" y="282" text-anchor="middle" font-size="12">Skills</text>
+    <text x="440" y="298" text-anchor="middle" font-size="9" fill="#75705f">instructions loaded into context</text>
+
+    <line x1="320" y1="260" x2="200" y2="316" stroke="#75705f" stroke-width="1.2" stroke-dasharray="4 3"/>
+    <line x1="320" y1="260" x2="440" y2="316" stroke="#75705f" stroke-width="1.2" stroke-dasharray="4 3"/>
+
+    <line x1="320" y1="260" x2="320" y2="150" stroke="#4f7a5e" stroke-width="1.5" marker-end="url(#s1)"/>
+    <text x="345" y="200" font-size="9.5" fill="#4f7a5e">may be one step inside</text>
+    <text x="345" y="214" font-size="9.5" fill="#4f7a5e">a larger, fixed sequence</text>
+
+    <rect x="120" y="60" width="400" height="90" rx="4" fill="none" stroke="#4f7a5e" stroke-width="1.8" stroke-dasharray="7 5"/>
+    <text x="320" y="90" text-anchor="middle" font-size="12.5">Workflow</text>
+    <text x="320" y="110" text-anchor="middle" font-size="9.5" fill="#75705f">a sequence decided in advance, in code —</text>
+    <text x="320" y="126" text-anchor="middle" font-size="9.5" fill="#75705f">a human wrote the steps, not the model</text>
+  </svg>
+  </div>
+
+  <p>Read it bottom to top: the model is the smallest, most passive thing in the stack. Everything above it adds a capability the model doesn't have on its own — memory of what just happened, the ability to actually do something, knowledge of how to do it well, and — at the very top — a shape decided by a person instead of decided live.</p>
+
+  <h2>LLM — predicts text, nothing else</h2>
+
+  <p>Start here because it's easy to forget: a language model takes text in and produces text out. That's the entire capability. It can't read a file, run a command, remember yesterday's conversation, or check whether what it said is true. Every other layer in this stack exists to compensate for one of those gaps.</p>
+
+  <h2>Agent — the loop that gives the model memory and initiative</h2>
+
+  <p>An agent is a program that calls the model repeatedly, feeding each response back in as input to the next call, so the model appears to "remember" and "decide" across multiple steps. The shape most agents take is <a href="how-coding-agents-work.html">ReAct</a>: the model proposes a thought and an action, something executes the action, the result comes back as an observation, and the loop continues until the model produces a final answer instead of another action.</p>
+
+  <p>The critical thing an agent is <em>not</em>: it's not the thing that actually runs commands or touches files. The agent is the decision loop. Something else does the touching.</p>
+
+  <h2>Harness — the thing that actually does anything</h2>
+
+  <p>This is the layer most often left out of the conversation entirely, and it's the one that matters most for safety. The harness is the ordinary program wrapped around the loop that reads the model's proposed action and actually executes it — runs the shell command, writes the file, calls the API — then hands the result back.</p>
+
+  <p class="callout">The model never does anything. It describes an intent as text. The harness is the only part of the whole stack with real permissions, and every security question in this space — what's this agent allowed to touch, what needs a confirmation prompt, what's sandboxed — is a harness question, not a model question.</p>
+
+  <p>This is also why two products built on the "same model" can behave completely differently: the model is identical, but one harness might allow unrestricted shell access and another might restrict it to three whitelisted read-only commands. The intelligence is shared; the danger (or safety) is entirely in this layer.</p>
+
+  <h2>Skills — instructions, not new capability</h2>
+
+  <p>A skill is a file of guidance the agent reads into context when a matching task shows up: which tools to use for this kind of job, in what order, which mistakes to avoid, what "done" looks like. Crucially, a skill doesn't grant the agent anything it couldn't already do — the harness already exposed the tools. What a skill adds is <em>accumulated judgment about how to use them well</em>, written down once instead of re-derived from scratch on every task of that shape. My own <a href="https://github.com/lsscecilia/skills-for-microservices">skills-for-microservices</a> repo is this exact pattern: the tools (file search, reading configs) already existed; the skill is the procedure for using them well specifically when a change spans several services.</p>
+
+  <h2>Workflow — the shape decided before anything runs</h2>
+
+  <p>Everything above is about a model making live decisions. A workflow is the opposite move: a human decides the sequence of steps ahead of time, in ordinary code. Step one always runs, then step two, then a fixed branch on a condition. Nobody — model or otherwise — is choosing what happens next at runtime; the control flow is just a program.</p>
+
+  <p>The useful test: could you draw the whole thing as a flowchart before running it once, and would that flowchart still be accurate afterward? If yes, it's a workflow. If the actual path depends on something the model decided mid-run that you couldn't have drawn in advance, it's an agent.</p>
+
+  <p>A workflow can call an LLM inside one bounded step — "summarize this ticket," "classify this request" — without that step controlling the overall sequence. And a workflow can contain an entire agent as one of its steps, handing off to the dynamic loop only where the right steps genuinely can't be enumerated in advance, then resuming the fixed sequence once the agent finishes. That's the dashed line in the diagram above: the workflow is the outer shape, and an agent is one thing that can happen inside it.</p>
+
+  <table>
+    <tr><th>Layer</th><th>What it adds</th><th>What it can't do alone</th></tr>
+    <tr><td>LLM</td><td>Language understanding and generation</td><td>Remember, act, know if it's right</td></tr>
+    <tr><td>Agent</td><td>Memory across steps, live decisions</td><td>Actually execute anything</td></tr>
+    <tr><td>Harness</td><td>Real execution, real permissions</td><td>Decide what should happen</td></tr>
+    <tr><td>Skills</td><td>Task-specific judgment, pre-loaded</td><td>Add new capability the harness didn't expose</td></tr>
+    <tr><td>Workflow</td><td>A guaranteed, predictable shape</td><td>Handle a task whose steps can't be known upfront</td></tr>
+  </table>
+
+  <h2>One request, through all five layers</h2>
+
+  <p>Concretely — "resolve this ticket that touches three services":</p>
+
+  <ul>
+    <li><strong>Workflow:</strong> ticket in → triage → <em>resolve</em> → open PR → run CI. Fixed, decided in advance.</li>
+    <li><strong>Agent:</strong> inside "resolve," a loop runs, because nobody can pre-write which files matter or how many attempts it takes: read, search, edit, test, read the failure, fix, re-test.</li>
+    <li><strong>Harness:</strong> every read, edit, and test run is a real action — a file actually changes, a process actually runs — executed by the program wrapping the loop, under whatever permissions it was granted.</li>
+    <li><strong>Skills:</strong> because the ticket spans services, a cross-service skill loads into context — which service owns what, which flows are legacy — so the agent isn't rediscovering that from zero.</li>
+    <li><strong>LLM:</strong> underneath every one of those steps, a single model call predicting the next useful token.</li>
+  </ul>
+
+  <p>Five different words, five different scopes, one coherent system. Most confusion in conversations about "agentic AI" comes from someone using one of these words to mean the whole stack. Ask which layer they actually mean, and the conversation gets a lot shorter.</p>
+
+  <p class="endnote">Personal notes, simplified on purpose. If I've drawn a boundary in the wrong place, <a href="mailto:lsscecilia8888@gmail.com">tell me</a>.</p>
+
+</div>
+</body>
+</html>
